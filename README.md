@@ -46,6 +46,19 @@ While we have a very good understanding of how the IQ sampling functionality wor
 | ESP32-S3 | ✅ Supported | Serial/JTAG | GPIO43 / GPIO44 | 2 MB |
 | ESP32-S31 | ✅ Supported | Serial/JTAG | GPIO58 / GPIO59 | 2 MB |
 
+## ESP32-S3 Turbo Mode (SPEC)
+
+On the ESP32-S3 the capture can also run **continuously**: the RF dump engine
+fills a gapless ring over three SRAM banks, the S3 computes FFT spectra on chip
+(256/1024/2048 bins) and streams only the spectra over the native USB port.
+This gives ~1300 spectrum updates per second at 16 and 80 MS/s instead of ~23
+bursts per second, and shrinks the blind gap between captures from ~42 ms to
+under 150 us. Commands: `SPEC`, `RING`, `RINGCAP` (capabilities `RING SPEC SPECN`);
+host tool: `tools/s3_ring.py`. The browser viewer enables it automatically
+when the firmware reports `SPEC`.
+
+Turbo Mode developed by Zoltan Doczi from [https://www.z2labs.io](https://www.z2labs.io/)
+
 ## Commands and transport
 
 Connect over native USB or a 3.3 V USB-to-UART adapter with crossed TX/RX
