@@ -10,6 +10,7 @@ set(receiver "${target_dir}/receiver.c")
 set(sources "common/burst_serial.c")
 set(dependencies esp_phy esp_wifi nvs_flash esp_timer esp_driver_uart)
 set(probes)
+set(fragments)
 
 if(IDF_TARGET STREQUAL "esp32s2")
     list(APPEND dependencies esp_usb_cdc_rom_console)
@@ -19,6 +20,10 @@ elseif(NOT IDF_TARGET STREQUAL "esp32")
 endif()
 
 if(IDF_TARGET STREQUAL "esp32s3")
+    list(APPEND sources "${target_dir}/s3_ring.c")
+    # SPEC-mode FFT; pinned submodule, the component manager stays disabled.
+    list(APPEND dependencies esp-dsp)
+    list(APPEND fragments "${target_dir}/linker.lf")
     list(APPEND probes SAMPLE_RATE_PROBE FILTER_REGISTER_PROBE S3_RF_PROBE)
 elseif(IDF_TARGET STREQUAL "esp32c5" OR IDF_TARGET STREQUAL "esp32c6" OR IDF_TARGET STREQUAL "esp32c61")
     set(receiver "families/c5_c6_c61/receiver.c")
@@ -33,6 +38,7 @@ if(IDF_TARGET STREQUAL "esp32c61" OR IDF_TARGET STREQUAL "esp32s31")
 endif()
 
 idf_component_register(SRCS "${receiver}" ${sources}
+    LDFRAGMENTS ${fragments}
     PRIV_INCLUDE_DIRS "common" "${target_dir}" "diagnostics"
     REQUIRES ${dependencies})
 

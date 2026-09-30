@@ -6,6 +6,7 @@
 #include "driver/usb_serial_jtag.h"
 #include "esp_cpu.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_phy_cert_test.h"
 #include "esp_rom_crc.h"
@@ -19,10 +20,12 @@
 
 #include "burst_serial.h"
 #include "rx_tuning.h"
+#include "s3_ring.h"
 
-/* Vendor S3 adctrig uses this 64 KiB aperture with MAC_DUMP_USAGE=4.
- * Keep both its DRAM and IRAM aliases out of the heap and static sections. */
-SOC_RESERVE_MEMORY_REGION(0x3fcd0000, 0x3fce0000, s3_rf_dump);
+/* Vendor S3 adctrig uses the 64 KiB aperture at 0x3fcd0000 (MAC_DUMP_USAGE=4).
+ * The continuous ring also uses the two banks below it. Keep all three, in
+ * both DRAM and IRAM aliases, out of the heap and static sections. */
+SOC_RESERVE_MEMORY_REGION(S3_RING_BANK_BASE, S3_RING_BANK_END, s3_rf_dump);
 #define IQ_WORDS 16380u
 #define IQ_BUFFER ((uint32_t *)0x3fcd0000)
 #define SRAM_OWNER_REG 0x600c101cu
@@ -173,6 +176,88 @@ static bool capture(unsigned n,unsigned divider,unsigned format) {
     return send_bytes(h,strlen(h)) && send_bytes(IQ_BUFFER,bytes);
 }
 
+/* Continuous modes (s3_ring.c). Reports end with one text line:
+ * <TAG> status detail units pairs elapsed_us late_max work_max_cycles
+ *       frames drops abandoned ffts stopped_by_host */
+static void ring_report(const char *tag,const ring_result_t *r) {
+    char h[224];
+    snprintf(h,sizeof(h),"%s %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu64 " %" PRIu64 " %" PRIu32
+             " %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 " %u\n",tag,r->status,r->detail,
+             r->units,r->pairs,r->elapsed_us,r->late_max,r->work_max,r->frames,r->drops,r->abandoned,
+             r->ffts,(unsigned)r->stopped_by_host);
+    reply(h);
+}
+/* RINGCAP payload: "RINGDATA units rate_hz n0 n1 n2 crc32\n", then the units'
+ * raw 32-bit IQ words back to back (gapless), then the RINGCAP report. */
+static void ring_send_capture(const ring_result_t *r,unsigned rate) {
+    uint32_t crc=0;
+    for(unsigned u=0;u<r->units;u++) {
+        const uint32_t *p=s3_ring_bank(r->cap[u].bank);
+        unsigned first=r->cap[u].first,n=r->cap[u].count,head=S3_RING_PAIRS-first;
+        if(head>n)head=n;
+        crc=esp_rom_crc32_le(crc,(const uint8_t *)(p+first),head*4);
+        crc=esp_rom_crc32_le(crc,(const uint8_t *)p,(n-head)*4);
+    }
+    char h[128];
+    snprintf(h,sizeof(h),"RINGDATA %" PRIu32 " %u %" PRIu32 " %" PRIu32 " %" PRIu32 " %08" PRIx32 "\n",
+             r->units,s3_ring_rate_hz(rate),r->cap[0].count,r->units>1?r->cap[1].count:0,
+             r->units>2?r->cap[2].count:0,crc);
+    reply(h);
+    for(unsigned u=0;u<r->units;u++) {
+        const uint32_t *p=s3_ring_bank(r->cap[u].bank);
+        unsigned first=r->cap[u].first,n=r->cap[u].count,head=S3_RING_PAIRS-first;
+        if(head>n)head=n;
+        (void)send_bytes(p+first,head*4);
+        if(n>head)(void)send_bytes(p,(n-head)*4);
+    }
+}
+static bool ring_command(const char *line) {
+    unsigned ms,rate,stride,upf,mode,units,nfft;char extra;int k;
+    ring_config_t c={0};
+    const char *tag;
+    bool usb=burst_serial_port()==BURST_SERIAL_USB;
+    if(!strcmp(line,"RINGINFO?")) {
+        /* The ring reserves 192 KiB of SRAM; report what the heap kept. */
+        char h[96];
+        snprintf(h,sizeof(h),"RINGINFO %u %u %u %u\n",(unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT),S3_RING_BANKS,S3_RING_THRESHOLD);
+        reply(h);return true;
+    }
+    if(sscanf(line,"RING %u %u %c",&ms,&rate,&extra)==2) {
+        c.mode=RING_MODE_STATS;c.rate=rate;c.duration_ms=ms;tag="RING";
+        if(rate!=0 && rate!=1 && rate!=6){reply("ERR rate\n");return true;}
+        if((!ms && !usb) || ms>86400000u){reply("ERR args\n");return true;}
+    } else if(sscanf(line,"RINGCAP %u %u %c",&units,&rate,&extra)==2) {
+        c.mode=RING_MODE_CAPTURE;c.rate=rate;c.capture_units=units;tag="RINGCAP";
+        if(rate!=0 && rate!=1 && rate!=6){reply("ERR rate\n");return true;}
+        if(!units || units>S3_RING_BANKS){reply("ERR args\n");return true;}
+    } else if(!strncmp(line,"SPEC ",5) &&
+              (k=sscanf(line,"SPEC %u %u %u %u %u %u %c",&ms,&stride,&upf,&mode,&rate,&nfft,&extra))>=4 && k<=6) {
+        /* Optional 5th field: rate code 6 = 16, 1 = 40, 0 = 80 Msps (default 16). */
+        if(k==4)rate=6;
+        if(k<6)nfft=256;
+        /* A 1024/2048-point FFT (37k/48k cycles) does not fit between bank
+         * switches at 80 Msps on one core (12288 pairs = 37k cycles). */
+        if(!s3_ring_valid_nfft(nfft) || (rate==0 && nfft>256)){reply("ERR nfft\n");return true;}
+        if(rate!=0 && rate!=1 && rate!=6){reply("ERR rate\n");return true;}
+        c.mode=RING_MODE_SPEC;c.rate=rate;c.nfft=nfft;c.duration_ms=ms;c.stride=stride;c.units_per_frame=upf;
+        c.max_hold=mode==1;tag="SPECEND";
+        if(!usb){reply("ERR transport\n");return true;}
+        if(!stride || stride>64 || !upf || upf>1000 || mode>1 || ms>86400000u){reply("ERR args\n");return true;}
+        char h[80];
+        snprintf(h,sizeof(h),"SPEC %u %u %u %u\n",nfft,s3_ring_rate_hz(rate),S3_RING_THRESHOLD,frequency_mhz);
+        reply(h);
+    } else return false;
+    ring_result_t r;
+    prepare_rx();
+    rx_filter_apply();
+    s3_ring_run(&c,&r);
+    rx_filter_restore();
+    if(c.mode==RING_MODE_CAPTURE && !r.status)ring_send_capture(&r,rate);
+    ring_report(tag,&r);
+    return true;
+}
+
 static void handle_command(char *line) {
     if(!strcmp(line,"TRANSPORT?")) {
         char answer[64];
@@ -185,6 +270,7 @@ static void handle_command(char *line) {
 #endif
         if(limits_command(line))return;
         if(gain_command(line))return;
+        if(ring_command(line))return;
         unsigned n,rate,crc,repeats;char extra;uint64_t nonce;
         bool iq8=false;
         if(!strncmp(line,"CAP16 ",6)){memcpy(line,"CAP20",5);iq8=true;}
@@ -211,7 +297,7 @@ static void handle_command(char *line) {
 #if CONFIG_ESP_SDR_UART_ENABLED
                   "DUALSERIAL "
 #endif
-                  "TUNEEXT RX40 RX16 LPFANA GAIN HWAGC IQ8\n");
+                  "TUNEEXT RX40 RX16 LPFANA GAIN HWAGC IQ8 RING SPEC SPECN\n");
         }
         else if(sscanf(line,"BANDWIDTH %u %c",&n,&extra)==1 && (!n || (n>=RX_BANDWIDTH_MIN && n<=RX_BANDWIDTH_MAX))) {
             rx_filter=rx_bandwidth_dcap(n);reply("OK\n");
@@ -278,6 +364,7 @@ void app_main(void) {
     (void)usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(100));
     ESP_ERROR_CHECK(usb_serial_jtag_driver_uninstall());
     burst_serial_init();
+    s3_ring_init();
     char line[128];
     int owner=-1;
     int64_t lease_deadline=0;

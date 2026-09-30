@@ -1,0 +1,6 @@
+# SPEC mode runs the FFT with interrupts masked between ring polls; keep the
+# kernel out of flash so a cache miss cannot delay a bank switch.
+[mapping:esp_sdr_s3_fft]
+archive: libesp-dsp.a
+entries:
+    dsps_fft2r_sc16_aes3 (noflash)
