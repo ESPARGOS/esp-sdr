@@ -30,6 +30,10 @@
 #include <string.h>
 
 #include "dsps_fft2r.h"
+/* esp-dsp aes3 FFT with the sum-branch bias corrected (s3_fft_rnd.S). */
+extern int16_t *dsps_fft_w_table_sc16;
+int s3_fft2r_sc16_rnd(int16_t *data, int N, int16_t *w);
+#define S3_FFT(buf, n) s3_fft2r_sc16_rnd((buf), (int)(n), dsps_fft_w_table_sc16)
 #include "esp_attr.h"
 #include "esp_cpu.h"
 #include "esp_rom_crc.h"
@@ -255,6 +259,22 @@ IRAM_ATTR static void spec_unpack(const uint32_t *p, unsigned at, unsigned from,
     }
 }
 
+/* Remove the receiver's DC offset (zero-IF LO leakage, 30-36 dB over the floor)
+ * after the FFT, for free: with the periodic Hann window a pure DC lands in bin 0
+ * and, at -1/2 of it, in bins +-1. Zero bin 0 and add half of it back to +-1.
+ * Output is bit-reversed: natural bin 0 is slot 0, bin 1 is slot n/2, bin n-1
+ * is slot n-1. Same notch as the burst mode's block-mean removal, 1 bin wide. */
+static inline int16_t sat16(int32_t v) { return v > 32767 ? 32767 : v < -32768 ? -32768 : (int16_t)v; }
+IRAM_ATTR static void spec_remove_dc(void) {
+    int32_t r0 = fft_buf[0], i0 = fft_buf[1];
+    unsigned s1 = spec_n / 2, sm = spec_n - 1;
+    fft_buf[2 * s1] = sat16(fft_buf[2 * s1] + r0 / 2);
+    fft_buf[2 * s1 + 1] = sat16(fft_buf[2 * s1 + 1] + i0 / 2);
+    fft_buf[2 * sm] = sat16(fft_buf[2 * sm] + r0 / 2);
+    fft_buf[2 * sm + 1] = sat16(fft_buf[2 * sm + 1] + i0 / 2);
+    fft_buf[0] = fft_buf[1] = 0;
+}
+
 IRAM_ATTR static void spec_accumulate(bool max_hold, unsigned from, unsigned to) {
     if (max_hold) {
         for (unsigned k = from; k < to; k++) {
@@ -387,7 +407,8 @@ RING_HOT static bool work_slice(void) {
     if (st.emitting) {
         emit_chunk();
     } else if (st.phase == BLK_FFT) {
-        dsps_fft2r_sc16(fft_buf, spec_n);
+        S3_FFT(fft_buf, spec_n);
+        spec_remove_dc();
         st.phase = BLK_ACCUM;
         st.pos = 0;
     } else if (st.phase == BLK_ACCUM) {
@@ -460,7 +481,7 @@ RING_HOT void s3_ring_run(const ring_config_t *cfg, ring_result_t *r) {
     if (spec) { /* warm caches/tables; bank 2 holds sentinels only */
         spec_unpack(bank_ptr(2), 0, 0, spec_n);
         uint32_t t_fft = esp_cpu_get_cycle_count();
-        dsps_fft2r_sc16(fft_buf, spec_n);
+        S3_FFT(fft_buf, spec_n);
         t_fft = esp_cpu_get_cycle_count() - t_fft;
         spec_accumulate(false, 0, spec_n);
         memset(accum, 0, sizeof(accum));

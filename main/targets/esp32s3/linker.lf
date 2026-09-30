@@ -4,3 +4,8 @@
 archive: libesp-dsp.a
 entries:
     dsps_fft2r_sc16_aes3 (noflash)
+
+[mapping:esp_sdr_s3_fft_rnd]
+archive: libmain.a
+entries:
+    s3_fft_rnd (noflash)

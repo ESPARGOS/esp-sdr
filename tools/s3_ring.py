@@ -71,7 +71,7 @@ def print_report(r, rate_hz=None):
           f"pairs {r['pairs']}, elapsed {r['elapsed_us'] / 1e3:.1f} ms")
     if rate_hz and r["elapsed_us"]:
         print(f"  pairs / (elapsed*fs) = {r['pairs'] / (r['elapsed_us'] * 1e-6 * rate_hz):.5f}"
-              "  (â‰1 when gapless; start/stop overhead makes it slightly <1)")
+              "  (≈1 when gapless; start/stop overhead makes it slightly <1)")
     print(f"  late_max {r['late_max']} pairs, work_max {r['work_max']} cycles "
           f"({r['work_max'] / 240:.1f} us)")
     if r["frames"] or r["ffts"]:
@@ -161,7 +161,7 @@ def check_gapless(words, counts, fs):
         print(f"boundary {u}->{u + 1} at pair {edges[u + 1]}: phase step {np.degrees(step):+.2f} deg"
               f" -> {gap:+.3f} samples  {'OK' if good else 'GAP?'}")
     print(f"in-unit phase noise (rms): {', '.join(f'{x:.1f}' for x in rms)} deg")
-    print("unambiguous for gaps up to Â±%.1f samples at this tone" % (np.pi / abs(w)))
+    print("unambiguous for gaps up to ±%.1f samples at this tone" % (np.pi / abs(w)))
     print("GAPLESS" if ok else "NOT GAPLESS")
     return ok
 
