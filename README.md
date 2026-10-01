@@ -53,9 +53,15 @@ fills a gapless ring over three SRAM banks, the S3 computes FFT spectra on chip
 (256/1024/2048 bins) and streams only the spectra over the native USB port.
 This gives ~1300 spectrum updates per second at 16 and 80 MS/s instead of ~23
 bursts per second, and shrinks the blind gap between captures from ~42 ms to
-under 150 us. Commands: `SPEC`, `RING`, `RINGCAP` (capabilities `RING SPEC SPECN`);
-host tool: `tools/s3_ring.py`. The browser viewer enables it automatically
-when the firmware reports `SPEC`.
+under 150 us. Commands: `SPEC`, `RING`, `RINGCAP`, `DUAL`, `ASSIST`, `DC`
+(capabilities `RING SPEC SPECN SPECSTAT DCT`); host tool: `tools/s3_ring.py`. The
+browser viewer enables it automatically when the firmware reports `SPEC`.
+
+The second core runs as a bare SPEC worker (ESP-IDF stays unicore), core 0
+helps between bank switches, and unpacking uses the PIE SIMD unit: 2-5x more
+FFT coverage than single-core, 1024/2048 bins also at 80 MS/s, and optional
+live chip statistics in the stream. Details and benchmarks:
+[docs/s3-turbo-dual-core.md](docs/s3-turbo-dual-core.md).
 
 Turbo Mode developed by Zoltan Doczi from [https://www.z2labs.io](https://www.z2labs.io/)
 

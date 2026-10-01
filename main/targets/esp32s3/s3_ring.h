@@ -35,6 +35,7 @@ typedef struct {
     unsigned stride;           /* SPEC: FFT every stride-th nfft-pair block */
     unsigned units_per_frame;  /* SPEC: units merged into one output frame */
     bool max_hold;             /* SPEC: per-bin max instead of mean power */
+    bool stats;                /* SPEC: insert SPS1 statistics frames (~4/s) */
 } ring_config_t;
 
 typedef struct {
@@ -61,3 +62,10 @@ void s3_ring_run(const ring_config_t *config, ring_result_t *result);
 const uint32_t *s3_ring_bank(unsigned bank);
 unsigned s3_ring_rate_hz(unsigned rate);
 bool s3_ring_valid_nfft(unsigned n);
+/* Second core as SPEC worker (started by s3_ring_init when available). */
+bool s3_ring_core1_alive(void);
+bool s3_ring_dual_active(void);
+void s3_ring_set_dual(bool on);
+extern bool s3_ring_assist;
+extern uint32_t s3_ring_c0_blocks;
+extern unsigned s3_ring_dc_mode; /* 0 = notch bin 0, 1 = slow DC tracker */

@@ -9,3 +9,4 @@ entries:
 archive: libmain.a
 entries:
     s3_fft_rnd (noflash)
+    s3_unpack (noflash)
