@@ -48,8 +48,10 @@ static void s3_tune(unsigned mhz) {
     if(!channel)set_rf_freq_offset(0,mhz,0); /* 40 MHz crystal; direct PLL MHz. */
 }
 
-#define S3_FREQ_MIN RX_FREQ_MIN
-#define S3_FREQ_MAX RX_FREQ_MAX
+/* Measured PLL lock range of the S3 (VSG60 CW sweep 0.15-6 GHz, 2026-10-01:
+ * LO locks 2196-2806 MHz, hard edges, no reception outside). */
+#define S3_FREQ_MIN 2200u
+#define S3_FREQ_MAX 2800u
 static unsigned frequency_mhz=2412;
 static bool rx_ready;
 #ifdef S3_RF_PROBE
@@ -212,15 +214,23 @@ static void ring_send_capture(const ring_result_t *r,unsigned rate) {
     }
 }
 static bool ring_command(const char *line) {
-    unsigned ms,rate,stride,upf,mode,units,nfft;char extra;int k;
+    unsigned ms,rate,stride,upf,mode,units,nfft,sflag=0;char extra;int k;
     ring_config_t c={0};
     const char *tag;
     bool usb=burst_serial_port()==BURST_SERIAL_USB;
     if(!strcmp(line,"SPECINFO?")) {
-        reply("SPECINFO {\"continuous\":true,\"transports\":[\"USB\"],\"profiles\":["
-              "[16000000,6,256,4,2],[16000000,6,1024,8,4],[16000000,6,2048,6,8],"
-              "[40000000,1,256,12,4],[40000000,1,1024,18,10],[40000000,1,2048,10,20],"
-              "[80000000,0,256,48,8]]}\n");
+        /* Dual-core profiles: stride_up11 sweep (0 abandoned/drops/CRC/desync,
+         * 2 x 2.5 s each); single-core profiles unchanged. */
+        if(ring_capture_dual_active())
+            reply("SPECINFO {\"continuous\":true,\"transports\":[\"USB\"],\"profiles\":["
+                  "[16000000,6,256,2,1],[16000000,6,1024,2,4],[16000000,6,2048,3,7],"
+                  "[40000000,1,256,5,3],[40000000,1,1024,5,9],[40000000,1,2048,7,17],"
+                  "[80000000,0,256,10,6],[80000000,0,1024,14,16],[80000000,0,2048,14,30]]}\n");
+        else
+            reply("SPECINFO {\"continuous\":true,\"transports\":[\"USB\"],\"profiles\":["
+                  "[16000000,6,256,4,2],[16000000,6,1024,8,4],[16000000,6,2048,6,8],"
+                  "[40000000,1,256,12,4],[40000000,1,1024,18,10],[40000000,1,2048,14,20],"
+                  "[80000000,0,256,48,8]]}\n");
         return true;
     }
     if(!strcmp(line,"RINGINFO?")) {
@@ -239,16 +249,16 @@ static bool ring_command(const char *line) {
         if(rate!=0 && rate!=1 && rate!=6){reply("ERR rate\n");return true;}
         if(!units || units>RING_BANKS){reply("ERR args\n");return true;}
     } else if(!strncmp(line,"SPEC ",5) &&
-              (k=sscanf(line,"SPEC %u %u %u %u %u %u %c",&ms,&stride,&upf,&mode,&rate,&nfft,&extra))>=4 && k<=6) {
+              (k=sscanf(line,"SPEC %u %u %u %u %u %u %u %c",&ms,&stride,&upf,&mode,&rate,&nfft,&sflag,&extra))>=4 && k<=7) {
         /* Optional 5th field: rate code 6 = 16, 1 = 40, 0 = 80 Msps (default 16). */
         if(k==4)rate=6;
         if(k<6)nfft=256;
         /* A 1024/2048-point FFT (37k/48k cycles) does not fit between bank
          * switches at 80 Msps on one core (12288 pairs = 37k cycles). */
-        if(!ring_capture_valid_nfft(nfft) || (rate==0 && nfft>256)){reply("ERR nfft\n");return true;}
+        if(!ring_capture_valid_nfft(nfft) || (rate==0 && nfft>256 && !ring_capture_dual_active())){reply("ERR nfft\n");return true;}
         if(rate!=0 && rate!=1 && rate!=6){reply("ERR rate\n");return true;}
         c.mode=RING_MODE_SPEC;c.rate=rate;c.nfft=nfft;c.duration_ms=ms;c.stride=stride;c.units_per_frame=upf;
-        c.max_hold=mode==1;tag="SPECEND";
+        c.max_hold=mode==1;c.stats=k>=7&&sflag;tag="SPECEND";
         if(!usb){reply("ERR transport\n");return true;}
         if(!stride || stride>64 || !upf || upf>1000 || mode>1 || ms>86400000u){reply("ERR args\n");return true;}
         char h[80];
@@ -299,12 +309,17 @@ static void handle_command(char *line) {
         else if(sscanf(line,"ADCCLOCK %u %c",&n,&extra)==1 && n<=4) {probe_adc=n;reply("OK\n");}
         else if(!strcmp(line,"ADCCLOCK?")){char h[64];snprintf(h,sizeof(h),"ADC %u\n",rom_chip_i2c_readReg(0x66,0,4));reply(h);}
 #endif
+        else if(!strcmp(line,"DUAL?")){char h[48];snprintf(h,sizeof(h),"DUAL %u %u\n",(unsigned)ring_capture_dual_active()*(ring_capture_assist?1u:2u),(unsigned)ring_capture_core1_alive());reply(h);}
+        else if(!strcmp(line,"DC?")){char h[16];snprintf(h,sizeof(h),"DC %u\n",ring_capture_dc_mode);reply(h);}
+        else if(sscanf(line,"DC %u %c",&n,&extra)==1 && n<2){ring_capture_dc_mode=n;reply("OK\n");}
+        else if(!strcmp(line,"ASSIST?")){char h[48];snprintf(h,sizeof(h),"ASSIST %u %" PRIu32 "\n",(unsigned)ring_capture_assist,ring_capture_c0_blocks);reply(h);}
+        else if(sscanf(line,"DUAL %u %c",&n,&extra)==1 && n<3){ring_capture_set_dual(n!=0);ring_capture_assist=n==1;reply("OK\n");}
         else if(!strcmp(line,"CAPS")) {
             reply("CAPS UARTBAUD RXLIMITS SERIALLEASE "
 #if CONFIG_ESP_SDR_UART_ENABLED
                   "DUALSERIAL "
 #endif
-                  "TUNEEXT RX40 RX16 LPFANA GAIN HWAGC IQ8 RING SPEC SPECN SPECCAPS\n");
+                  "TUNEEXT RX40 RX16 LPFANA GAIN HWAGC IQ8 RING SPEC SPECN SPECCAPS SPECSTAT DCT\n");
         }
         else if(sscanf(line,"BANDWIDTH %u %c",&n,&extra)==1 && (!n || (n>=RX_BANDWIDTH_MIN && n<=RX_BANDWIDTH_MAX))) {
             rx_filter=rx_bandwidth_dcap(n);reply("OK\n");

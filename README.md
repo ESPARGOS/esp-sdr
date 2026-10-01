@@ -61,7 +61,7 @@ transport before offering this mode.
 | ESP32-C6 | 256 bins; 80 MS/s; native USB | 512–2048 bins over USB; 256–2048 over UART |
 | ESP32-C61 | 256 bins; 4/8/10/20/40/80 MS/s; native USB | 512/1024 bins over USB; 256–1024 over UART |
 | ESP32-S2 | — | 256–2048 bins; 16/40/80 MS/s; USB or UART |
-| ESP32-S3 | 256/1024/2048 bins at 16/40 MS/s; 256 at 80 MS/s; native USB | — |
+| ESP32-S3 | 256/1024/2048 bins at 16/40/80 MS/s; second core as DSP worker; native USB | — |
 | ESP32-S31 | — | 256–2048 bins; 4/8/10/20/40/80 MS/s |
 
 Continuous capture keeps the RF writer running, but the CPU analyzes only
@@ -73,6 +73,9 @@ available separately.
 The original S3 Turbo Mode was developed by Zoltan Doczi from
 [Z2Labs](https://www.z2labs.io/). The shared implementation extends it with
 C6/C61 bank rotation, C3 live-bank reads, and portable snapshot FFTs.
+On the S3 the second core runs as a bare DSP worker next to the unicore
+ESP-IDF, with a PIE (SIMD) unpack and a slow DC tracker at 0 Hz; see
+[S3 dual-core Turbo Mode and benchmarks](docs/s3-turbo-dual-core.md).
 See [spectrum protocol and hardware validation](docs/spectrum.md) for the
 wire format, limitations and test results. The S3 ring diagnostic host tool
 is [tools/s3_ring.py](tools/s3_ring.py).

@@ -61,6 +61,7 @@ typedef struct {
     unsigned stride;           /* SPEC: FFT every stride-th nfft-pair block */
     unsigned units_per_frame;  /* SPEC: units merged into one output frame */
     bool max_hold;             /* SPEC: per-bin max instead of mean power */
+    bool stats;                /* SPEC: insert SPS1 statistics frames (~4/s) */
 } ring_config_t;
 
 typedef struct {
@@ -87,3 +88,13 @@ void ring_capture_run(const ring_config_t *config, ring_result_t *result);
 const uint32_t *ring_capture_bank(unsigned bank);
 unsigned ring_capture_rate_hz(unsigned rate);
 bool ring_capture_valid_nfft(unsigned n);
+/* 0 Hz handling after the FFT: 0 = notch bin 0, 1 = slow DC tracker (default). */
+extern unsigned ring_capture_dc_mode;
+#if CONFIG_IDF_TARGET_ESP32S3
+/* Second core as SPEC worker (started by ring_capture_init when available). */
+bool ring_capture_core1_alive(void);
+bool ring_capture_dual_active(void);
+void ring_capture_set_dual(bool on);
+extern bool ring_capture_assist;     /* core 0 helps core 1 between bank switches */
+extern uint32_t ring_capture_c0_blocks; /* blocks core 0 handed off in the last run */
+#endif
