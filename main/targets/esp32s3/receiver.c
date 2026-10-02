@@ -42,10 +42,12 @@ extern void rom_set_rxclk_en(unsigned);
 #define phy_set_rxclk_en rom_set_rxclk_en
 extern void set_chanfreq(unsigned,unsigned);
 extern void set_rf_freq_offset(unsigned,unsigned,int);
+static int s3_fofs;
 static void s3_tune(unsigned mhz) {
-    bool channel=(mhz>=2412 && mhz<=2472 && (mhz-2412)%5==0)||mhz==2484;
+    /* a kHz offset (FOFS) needs the direct PLL path, also on Wi-Fi channel MHz */
+    bool channel=!s3_fofs && ((mhz>=2412 && mhz<=2472 && (mhz-2412)%5==0)||mhz==2484);
     set_chanfreq(channel?mhz:2412,0);
-    if(!channel)set_rf_freq_offset(0,mhz,0); /* 40 MHz crystal; direct PLL MHz. */
+    if(!channel)set_rf_freq_offset(0,mhz,s3_fofs); /* 40 MHz crystal; direct PLL MHz. */
 }
 
 /* Measured PLL lock range of the S3 (VSG60 CW sweep 0.15-6 GHz, 2026-10-01:
@@ -216,6 +218,7 @@ static void ring_send_capture(const ring_result_t *r,unsigned rate) {
 static bool ring_command(const char *line) {
     unsigned ms,rate,stride,upf,mode,units,nfft,sflag=0,n;char extra;int k;
     if(!strcmp(line,"DUAL?")){char h[48];snprintf(h,sizeof(h),"DUAL %u %u\n",(unsigned)ring_capture_dual_active()*(ring_capture_assist?1u:2u),(unsigned)ring_capture_core1_alive());reply(h);return true;}
+    {int off;if(sscanf(line,"FOFS %d %c",&off,&extra)==1){s3_fofs=off;rx_ready=false;prepare_rx();reply("OK\n");return true;}}
     if(!strcmp(line,"DC?")){char h[16];snprintf(h,sizeof(h),"DC %u\n",ring_capture_dc_mode);reply(h);return true;}
     if(sscanf(line,"DC %u %c",&n,&extra)==1 && n<2){ring_capture_dc_mode=n;reply("OK\n");return true;}
     if(!strcmp(line,"ASSIST?")){char h[48];snprintf(h,sizeof(h),"ASSIST %u %" PRIu32 "\n",(unsigned)ring_capture_assist,ring_capture_c0_blocks);reply(h);return true;}
@@ -266,6 +269,20 @@ static bool ring_command(const char *line) {
         if(!stride || stride>64 || !upf || upf>1000 || mode>1 || sflag>1 || ms>86400000u){reply("ERR args\n");return true;}
         char h[80];
         snprintf(h,sizeof(h),"SPEC %u %u %u %u\n",nfft,ring_capture_rate_hz(rate),RING_THRESHOLD,frequency_mhz);
+        reply(h);
+    } else if(sscanf(line,"IQS %u %u %u %u %u %u %c",&ms,&stride,&nfft,&rate,&upf,&mode,&extra)>=4) {
+        /* IQS ms dec bits rate [shift] [mode]: continuous decimated IQ (IQS1 frames).
+         * mode 0: FIR at 0 Hz IF; mode 2: +fs/4 shift first (LO tuned fs/4 below).
+         * Default shift scales the 15-bit FIR output to the requested bits. */
+        int kk=sscanf(line,"IQS %u %u %u %u %u %u",&ms,&stride,&nfft,&rate,&upf,&mode);
+        if(kk<5)upf=nfft<15u?15u-nfft:0u;
+        if(kk<6)mode=0;
+        if(mode!=0 && mode!=2){reply("ERR mode\n");return true;}
+        if(rate!=0 && rate!=1 && rate!=6){reply("ERR rate\n");return true;}
+        if(!usb){reply("ERR transport\n");return true;}
+        c.mode=RING_MODE_IQ;c.rate=rate;c.duration_ms=ms;c.iq_dec=stride;c.iq_bits=nfft;c.iq_shift=upf;c.iq_rot=mode==2;tag="IQSEND";
+        char h[96];
+        snprintf(h,sizeof(h),"IQS %u %u %u %u %u %u\n",ring_capture_rate_hz(rate),stride,nfft,upf,mode,frequency_mhz);
         reply(h);
     } else return false;
     ring_result_t r;

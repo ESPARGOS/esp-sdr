@@ -51,7 +51,7 @@ typedef enum {
     RING_FAIL_TRANSPORT, /* SPEC requested over UART */
 } ring_status_t;
 
-typedef enum { RING_MODE_STATS, RING_MODE_CAPTURE, RING_MODE_SPEC } ring_mode_t;
+typedef enum { RING_MODE_STATS, RING_MODE_CAPTURE, RING_MODE_SPEC, RING_MODE_IQ } ring_mode_t;
 
 typedef struct {
     ring_mode_t mode;
@@ -63,6 +63,10 @@ typedef struct {
     unsigned units_per_frame;  /* SPEC: units merged into one output frame */
     bool max_hold;             /* SPEC: per-bin max instead of mean power */
     bool stats;                /* SPEC: insert SPS1 statistics frames (~4/s) */
+    unsigned iq_dec;           /* IQ: decimation 64..1024 (power of two), two-stage FIR */
+    unsigned iq_bits;          /* IQ: 4, 8 or 16 bits per component */
+    unsigned iq_shift;         /* IQ: rounding right shift of the FIR output (10-bit sample * 32) */
+    bool iq_rot;               /* IQ: shift by +fs/4 before the FIR (LO tuned fs/4 below) */
 } ring_config_t;
 
 typedef struct {
