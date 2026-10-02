@@ -42,7 +42,8 @@ extern void rom_set_rxclk_en(unsigned);
 #define phy_set_rxclk_en rom_set_rxclk_en
 extern void set_chanfreq(unsigned,unsigned);
 extern void set_rf_freq_offset(unsigned,unsigned,int);
-static int s3_fofs;
+static void s3_tune(unsigned mhz);
+static int s3_fofs; /* FOFS: PLL offset in kHz, applied from the next tune */
 static void s3_tune(unsigned mhz) {
     /* a kHz offset (FOFS) needs the direct PLL path, also on Wi-Fi channel MHz */
     bool channel=!s3_fofs && ((mhz>=2412 && mhz<=2472 && (mhz-2412)%5==0)||mhz==2484);
