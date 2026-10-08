@@ -1,0 +1,119 @@
+ESP32 family DC retuning and background calibration recovery — 2026-10-08
+
+Implemented as separate changes, crediting 14sea's PR #9 investigation:
+https://github.com/ESPARGOS/esp-sdr/pull/9
+See pr9-review.txt for the original four-chip comparison and PR analysis.
+
+Implementation
+
+Retunes preserve startup RX IQ correction and redo DC calibration at the
+requested LO. They no longer deliberately rerun the radiating IQ sweep.
+H2 needs four startup IQ pairs, one per RF gain group: measure these once at
+boot and reuse them when rebuilding its gain table. A single factory IQ pair
+was tested and rejected because it produced much larger DC offsets.
+The ESP32 manual-gain release register address is also corrected.
+
+A second change detects actual PHY DC measurements and remeasures DC at the
+requested LO before the next capture, even when the requested frequency did
+not change. It covers all ten families and both S31 profiles. Eight families
+wrap the pinned PHY archive's measurement function and count completions.
+ESP32/S2 internal Xtensa calls bypass linker wrapping, so those families
+compare the exported DC tables instead. Table sizes and private function
+ABIs depend on the pinned SDK versions and must be requalified on upgrades.
+
+The PHY mutex serializes DC recalibration and table snapshots with tracking.
+It is not held throughout acquisition: tracking can affect a capture already
+in progress; the next preparation repairs calibration. S31 streaming stops
+DMA and uses its normal reconfiguration/stream-epoch path before resuming.
+H2 and S31's existing disabled periodic PLL tracking remains disabled.
+Startup and autonomous PHY calibration can still transmit. This is not a
+claim that the whole firmware is receive-only or emits no RF energy.
+
+Bench and coverage
+
+Nine distinct USB-accessible boards: C5, C6, S3, C3, H2, C61, S2, S31 and C2
+(ESP8684H). Original ESP32 was not connected. H2's FT232 connection shares the
+same board as native USB; UART capture was also checked, but it is not a tenth
+board. S2 has no antenna. S31 was accessible by UART, not a usable native USB
+or Ethernet streaming connection.
+
+HackRF One and nearby antennas, no coax/attenuators or screened enclosure.
+Retuning alternated 2350/2351 MHz with 40 commands (39 actual changes), using
+8 MS/s HackRF captures centred at LO+4 MHz to inspect the LO+5 MHz IQ tone.
+
+Family        Baseline tone events    Fixed tone events    Recovery trials
+C5                 39/39                   0/39                 20/20
+C6                 39/39                   0/39                 20/20
+S3                 39/39                   0/39                 20/20
+C3                 39/39                   0/39                 20/20
+C61                39/39                   0/39                 20/20
+C2                 39/39                   0/39                 20/20
+S31 burst          39/39                   0/39                 20/20
+H2                  0/39                   0/39                 20/20
+S2                 no antenna             no antenna           20/20
+ESP32              not connected          not connected        host only
+S31 streaming      compile only           compile only         host only
+
+H2's baseline tone was not detected even in an additional 20 MHz-wide search
+around LO. Its zero count therefore does not establish an RF improvement or
+exclude emissions elsewhere. The seven positive-baseline results support
+removing the repeated IQ sweep, not broadening it with more register guards.
+
+Recovery trials used an instrumented build to invoke the real DC measurement
+at 2412 MHz without updating the receiver's requested frequency or saved
+calibration state. At each of 2350, 2370, 2413 and 2484 MHz, five repetitions
+checked fresh -> stale -> fresh, a CRC-valid capture without another FREQ
+command, and retention of manual gain. All 180 trials passed. S2 explicitly
+verified table-snapshot detection after its measurement wrapper failed to
+observe internal calls. These are fault-injection tests, not controlled
+physical temperature cycling. The original C5 tracker experiment is in the
+historical report; its temperature stamp missed 10 of 20 forced actual
+recalibrations, which motivates observing DC work instead of that stamp.
+
+With gain capped at 45, maximum post-recovery DC magnitudes in ADC counts:
+C2 6.8; C3 8.0; C5 12.4; C6 6.5; C61 12.2; H2 43.2; S2 12.6;
+S3 9.5; S31 19.6. Earlier maximum-gain stress captures can saturate and are
+retained separately; this is not a guarantee of small offsets at every gain.
+
+All eight antenna-equipped boards received HackRF tones at 2352 and 2372 MHz
+with LO at 2350 and 2370 MHz. Each used gain settling/adaptation followed by
+four recorded captures per LO. Minimum measured tone SNR exceeded 35 dB.
+H2 image rejection varied: the cached-IQ candidate measured >=22.9 dB versus
+>=23.0 dB baseline, while the final explicit-boot version measured >=17.8 dB.
+These nearby-antenna runs establish reception, not equivalent image rejection
+at all temperatures/frequencies or across boot calibrations. Keeping boot IQ
+coefficients trades repeated radiating calibration for possible IQ drift.
+
+H2 also retains a pre-existing gain-dependent DC bias on some large retunes
+with manual gain held at 45: repeated 2350/2484 MHz jumps reached median DC
+magnitudes about 250 baseline and 236 cached-IQ. This patch does not solve
+that separate issue. Ordinary FREQ-then-GAIN and recovery tests were cleaner.
+
+C2's CH340 occasionally lost bytes on long transfers at 2 Mbaud and even
+1 Mbaud; CRC detects this. Recovery used 1024 samples at 1 Mbaud and passed
+20/20. Others used 4096 samples. H2 was sampled at 32 MS/s, the others at
+80 MS/s. S31 UART tests also used 1 Mbaud. S2 has functional/CRC/calibration
+coverage only. S31 streaming has build and host coverage, not hardware
+streaming validation. Original ESP32 has build and host coverage only.
+
+Validation and reproducibility
+
+The standalone retune commit passed 51 host tests; combined code passed 53.
+All 11 profiles were compiled against their repository-pinned SDKs:
+common 25fe69f946311abdaf9ad56591f25fedbc20ac98;
+S31 burst 26dd2948925d44f41e3bb614fb044b7a0839a242;
+S31 stream c712a0dde385d659a1470a136251980d31a70bc1.
+Final production build/flash results are recorded separately in the local
+artifacts/dc-retune-all/final-verification.json, including installed revision.
+
+Local ignored evidence: artifacts/pr9-review/ and artifacts/dc-retune-all/.
+The latter holds baseline/fixed IQ captures and analyses, per-board recovery
+JSON, tone JSON/NPZ, H2 variant comparisons, host/build/flash logs, exported
+firmware, and flash backups. scripts/ contains the test harnesses. Diagnostic
+commands are not part of production firmware. Experimental version strings
+can refer to dirty intermediate commits; retain the matching binaries and
+logs rather than identifying those experiments solely by their version text.
+
+These tests do not establish regulatory compliance, calibrated sensitivity,
+full tuning-range performance, 5 GHz performance, or long-term thermal
+stability. No changes were made to the user's /opt/esp32/esp-idf checkout.

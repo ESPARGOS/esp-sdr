@@ -223,7 +223,14 @@ static void capture_loop(void *arg) {
     uint64_t consumed = 0;
     command_t cmd;
     for (;;) {
-        if (xQueueReceive(commands, &cmd, 0) == pdTRUE) {
+        bool requested = xQueueReceive(commands, &cmd, 0) == pdTRUE;
+        if (requested || (running && rx_recalibration_stale())) {
+            if (!requested) {
+                cmd.config = receiver_config;
+                cmd.owner = stream_load(&stream_owner);
+            }
+            /* Restart after tracking with a new epoch, discarding old DMA
+             * data. Never recalibrate while acquisition is running. */
             stream_store(&stream_owner, STREAM_IDLE);
             if (running) {
                 parlio_rx_soft_delimiter_start_stop(unit, delimiter, false);
@@ -266,7 +273,7 @@ static void capture_loop(void *arg) {
                 stream_store(&stream_owner, cmd.owner);
             }
             esp_err_t ok = ESP_OK;
-            xQueueSend(replies, &ok, portMAX_DELAY);
+            if (requested) xQueueSend(replies, &ok, portMAX_DELAY);
         }
         unsigned owner = stream_load(&stream_owner);
         if (running && (owner == STREAM_IDLE || (owner == STREAM_USB && !usb_ready()))) {

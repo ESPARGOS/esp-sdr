@@ -1,0 +1,17 @@
+if(IDF_TARGET STREQUAL "esp32" OR IDF_TARGET STREQUAL "esp32s2")
+    # Local Xtensa calls bypass --wrap; these targets compare DC table contents.
+    return()
+endif()
+# Keep burst and streaming builds on the same DC-generation hooks.
+if(IDF_TARGET STREQUAL "esp32c5")
+    set(rx_dc_measure phy_set_rx_gain_cal_dc)
+elseif(IDF_TARGET STREQUAL "esp32c61" OR IDF_TARGET STREQUAL "esp32s31")
+    set(rx_dc_measure phy_set_rx_gain_cal_dc_new)
+elseif(IDF_TARGET STREQUAL "esp32c6")
+    set(rx_dc_measure set_rx_gain_cal_dc_new)
+elseif(IDF_TARGET STREQUAL "esp32c2")
+    set(rx_dc_measure ram_set_rx_gain_cal_dc)
+else()
+    set(rx_dc_measure set_rx_gain_cal_dc)
+endif()
+target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=${rx_dc_measure}")

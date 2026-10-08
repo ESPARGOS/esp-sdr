@@ -68,7 +68,7 @@ void install_word(uint32_t a,uint32_t b,unsigned index) { write_gain_mem(a,b,ind
             (path/'vendor.c').write_text(vendor)
             (path/'reference.c').write_text(reference)
             subprocess.run([
-                'cc', '-std=c11', '-DCONFIG_IDF_TARGET_ESP32H2=1',
+                'cc', '-Drx_recalibrate=rx_recalibrate_locked', '-std=c11', '-DCONFIG_IDF_TARGET_ESP32H2=1',
                 '-I'+tmp, '-I'+str(MAIN/'common'), str(MAIN/'common/rx_recalibration.c'),
                 str(path/'vendor.c'), str(path/'reference.c'),
                 '-Wl,--wrap=chip_v7_set_chan_ana', '-Wl,--wrap=write_gain_mem',
@@ -180,7 +180,7 @@ void reference_tune(unsigned channel) { chip_v7_set_chan_ana(channel); }
                 (path/'vendor.c').write_text(vendor)
                 (path/'reference.c').write_text(reference)
                 subprocess.run([
-                    'cc', '-std=c11', '-Wall', '-Werror=implicit-function-declaration',
+                    'cc', '-Drx_recalibrate=rx_recalibrate_locked', '-std=c11', '-Wall', '-Werror=implicit-function-declaration',
                     '-DCONFIG_IDF_TARGET_' + chip.upper() + '=1',
                     '-I'+tmp, '-I'+str(MAIN/'common'), '-I'+str(MAIN/'targets'/chip),
                     str(MAIN/'common/rx_recalibration.c'), str(path/'vendor.c'),
@@ -270,7 +270,7 @@ void reference_tune(unsigned mhz) { phy_set_channel_rfpll_freq(mhz,40,0); }
                 symbol = ('phy_chip_set_chan_ana' if chip == 'ESP32C5'
                           else 'phy_set_channel_rfpll_freq')
                 subprocess.run([
-                    'cc', '-std=c11', '-Wall', '-Werror=implicit-function-declaration',
+                    'cc', '-Drx_recalibrate=rx_recalibrate_locked', '-std=c11', '-Wall', '-Werror=implicit-function-declaration',
                     '-DCONFIG_IDF_TARGET_'+chip+'=1', '-I'+tmp, '-I'+str(MAIN/'common'),
                     str(MAIN/'common/rx_recalibration.c'), str(path/'vendor.c'),
                     str(path/'reference.c'), '-Wl,--wrap='+symbol, '-o', str(path/'check')

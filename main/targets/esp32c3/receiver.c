@@ -61,7 +61,7 @@ static bool frequency_valid(unsigned mhz) {
 }
 static void tune_rx(unsigned mhz) {
     static unsigned calibrated_mhz;
-    if (calibrated_mhz != mhz) {
+    if (calibrated_mhz != mhz || rx_recalibration_stale()) {
         rx_recalibrate(mhz);
         calibrated_mhz = mhz;
     }
@@ -77,7 +77,7 @@ static void reply(const char *s) { (void)send_bytes(s,strlen(s)); }
 #include "burst_limits.h"
 
 static void prepare_rx(void) {
-    if(rx_ready)return;
+    if(rx_ready && !rx_recalibration_stale())return;
     tune_rx(frequency_mhz);
     stop_tx_tone(1);
     rom_pbus_workmode();

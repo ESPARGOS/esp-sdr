@@ -36,6 +36,8 @@ int main(void) {
     def test_receive_frequency_maps_to_each_chip_pll(self):
         stub = r'''
 #include <assert.h>
+#include <stdbool.h>
+bool rx_recalibration_stale(void) { return false; }
 void rx_recalibrate(unsigned mhz) {}
 #include <stdbool.h>
 #include <stdint.h>
@@ -73,7 +75,7 @@ unsigned rtc_clk_xtal_freq_get(void){return 40;}
             ('esp32s3', 'static void s3_tune(', '#define S3_FREQ_MIN', 's3_tune(f)'),
         ]:
             source = (MAIN/'targets'/target/'receiver.c').read_text()
-            helpers[target] = (source[source.index(start):source.index(end)], call)
+            helpers[target] = (source[source.index(start, source.index(start)+1) if target == "esp32" else source.index(start):source.index(end)], call)
         source = (MAIN/'targets/esp32c6/chip.h').read_text()
         helpers['esp32c6'] = (source[source.index('static void c6_set_chan('):source.index('#define phy_chip_set_chan')], 'c6_set_chan(f,0)')
         for target, call in [('esp32c5','c5_set_chan(f,0)'), ('esp32c61','c61_set_chan(f,0)'), ('esp32s31','s31_tune(f)')]:
@@ -131,6 +133,8 @@ int main(void){
             with self.subTest(target=target):
                 self.compile_run(f'#define CONFIG_IDF_TARGET_{target.upper()} 1\n'+r'''
 #include <assert.h>
+#include <stdbool.h>
+bool rx_recalibration_stale(void) { return false; }
 void rx_recalibrate(unsigned mhz) {}
 #include <stdbool.h>
 static unsigned ckgen, frequency_mhz, setups, delays;
@@ -183,6 +187,8 @@ int main(void){
     def test_s2_capacitor_search_and_failure_restore(self):
         self.compile_run(r'''
 #include <assert.h>
+#include <stdbool.h>
+bool rx_recalibration_stale(void) { return false; }
 void rx_recalibrate(unsigned mhz) {}
 #include <stdbool.h>
 static unsigned regs[16], steps, scenario;
@@ -220,6 +226,8 @@ int main(void){
         prepare = source[source.index('static void prepare_rx(void) {'):source.index('#include "filter_probe.h"')]
         self.compile_run(r'''
 #include <assert.h>
+#include <stdbool.h>
+bool rx_recalibration_stale(void) { return false; }
 void rx_recalibrate(unsigned mhz) {}
 #include <stdbool.h>
 #define CONFIG_IDF_TARGET_ESP32C5 1
@@ -255,6 +263,8 @@ int main(void){
     def test_s2_s3_s31_production_parsers(self):
         stub = r'''
 #include <assert.h>
+#include <stdbool.h>
+bool rx_recalibration_stale(void) { return false; }
 void rx_recalibrate(unsigned mhz) {}
 #include <stdbool.h>
 #include <stdint.h>

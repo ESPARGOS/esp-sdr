@@ -102,6 +102,7 @@ extern unsigned char phy_param[];
 extern void burst_gain_mirror(int);
 static unsigned gain_init, gain_threshold;
 static void prepare_rx(void) {
+    if (rx_recalibration_stale()) s31_tune(frequency_mhz);
     phy_pbus_workmode();
     phy_pbus_xpd_tx_off();
     phy_pbus_xpd_rx_on(1);

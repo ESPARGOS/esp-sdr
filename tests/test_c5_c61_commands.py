@@ -12,6 +12,8 @@ class SharedCommands(unittest.TestCase):
         handler=source[source.index('static void handle_command(char *line) {'):]
         stub=r'''
 #include <assert.h>
+#include <stdbool.h>
+bool rx_recalibration_stale(void) { return false; }
 void rx_recalibrate(unsigned mhz) {}
 #include <stdbool.h>
 static bool burst_version_command(const char *s) { return false; }

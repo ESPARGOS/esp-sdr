@@ -4,7 +4,7 @@
 /* Keep out-of-band requests out of the channel calibration/indexing path. */
 static void s31_tune(unsigned mhz) {
     static unsigned calibrated_mhz;
-    if (calibrated_mhz != mhz) {
+    if (calibrated_mhz != mhz || rx_recalibration_stale()) {
         rx_recalibrate(mhz);
         calibrated_mhz = mhz;
     }

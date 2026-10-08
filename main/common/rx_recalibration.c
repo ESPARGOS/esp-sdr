@@ -39,7 +39,7 @@ void __wrap_phy_chip_set_chan_ana(unsigned mhz) {
 extern void phy_set_rx_gain_cal_dc(unsigned, unsigned, void *, void *);
 extern void phy_adc_rate_cal_rxdc(void);
 extern void phy_set_rx_gain_table(unsigned, unsigned);
-void rx_recalibrate(unsigned mhz) {
+void rx_recalibrate_locked(unsigned mhz) {
     measurement_mhz = mhz;
     release_manual_gain();
     __real_phy_chip_set_chan_ana(mhz);
@@ -69,7 +69,7 @@ void __wrap_phy_set_channel_rfpll_freq(unsigned mhz, unsigned crystal, unsigned 
     if (measurement_mhz) (void)rx_pll_recover(measurement_mhz);
 }
 extern void phy_set_rx_gain_table(unsigned, unsigned);
-void rx_recalibrate(unsigned mhz) {
+void rx_recalibrate_locked(unsigned mhz) {
     measurement_mhz = mhz;
     release_manual_gain();
     uint32_t *flags = (void *)(phy_param + 164);
@@ -115,7 +115,7 @@ void rx_h2_calibrate_iq_at_boot(void) {
     REG_WRITE(0x600a0450u, iq_control);
     startup_iq_valid = 1;
 }
-void rx_recalibrate(unsigned mhz) {
+void rx_recalibrate_locked(unsigned mhz) {
     measurement_mhz = mhz;
     force_rx_gain(0, 0);
     phy_set_freq(mhz, 0);
@@ -173,7 +173,7 @@ extern void set_rx_gain_table(unsigned, unsigned);
 extern uint32_t chip7_sleep_params[];
 #endif
 #endif
-void rx_recalibrate(unsigned mhz) {
+void rx_recalibrate_locked(unsigned mhz) {
     measurement_mhz = mhz;
     release_manual_gain();
     measurement_tune();

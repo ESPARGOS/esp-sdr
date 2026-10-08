@@ -72,6 +72,18 @@ corrections on H2). This avoids the loopback IQ calibration tone previously gene
 It does not suppress calibration performed by the PHY at startup or by its
 background temperature tracker.
 
+DC-measurement counters detect when the PHY replaces the receive calibration,
+including when its temperature stamp stays unchanged. ESP32 and S2 compare the
+actual cached DC tables because their PHY archives resolve DC calls internally. Before the
+next capture, the receiver refreshes DC at the requested LO and restores the
+receive settings. This also applies to an unchanged frequency. Recalibration
+uses the PHY mutex so its reference-frequency override cannot race the tracking
+task. It does not hold that mutex throughout acquisition: a capture interrupted
+by tracking can still be affected, with recovery at the next preparation.
+S31 streaming stops acquisition and starts a new stream epoch on recovery,
+discarding the old DMA data. H2 and both S31 profiles currently disable periodic
+PLL tracking; their DC invalidation hooks still cover explicit PHY measurements.
+
 C5 programs the requested frequency through `phy_set_chanfreq` after the DC
 measurement. Other backends may select a standard channel before direct PLL
 programming; S31 also keeps arbitrary frequencies out of channel calibration.

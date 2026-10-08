@@ -74,7 +74,13 @@ static void reply(const char *fmt, ...) {
     if (length > 0) burst_serial_send(text, length < sizeof(text) ? length : sizeof(text)-1);
 }
 
+static void tune_rx(unsigned mhz);
+static void apply_gain(void);
 static void prepare_rx(void) {
+    if (rx_recalibration_stale()) {
+        tune_rx(frequency_mhz);
+        apply_gain();
+    }
     rom_pbus_workmode();
     rom_pbus_xpd_tx_off();
     rom_pbus_xpd_rx_on(1);
@@ -171,7 +177,7 @@ extern void rom_set_rf_freq_offset(unsigned crystal, unsigned mhz, int offset);
 
 static void tune_rx(unsigned mhz) {
     static unsigned calibrated_mhz;
-    if (calibrated_mhz != mhz) {
+    if (calibrated_mhz != mhz || rx_recalibration_stale()) {
         rx_recalibrate(mhz);
         calibrated_mhz = mhz;
     }

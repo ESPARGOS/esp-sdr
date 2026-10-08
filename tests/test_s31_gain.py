@@ -16,6 +16,10 @@ class S31Gain(unittest.TestCase):
         stub = r'''
 #include <assert.h>
 #include <stdbool.h>
+static unsigned frequency_mhz = 2350;
+static bool stale;
+static bool rx_recalibration_stale(void) { return stale; }
+static void s31_tune(unsigned mhz) { assert(mhz == frequency_mhz); stale = false; }
 static bool hardware_agc = true;
 static unsigned gain_code = 40, forced, selected, saturation, rx_clock;
 /* The real PBUS setup releases manual gain, even on an already-running RX. */
@@ -36,7 +40,9 @@ int main(void) {
     for (unsigned i = 0; i < sizeof(gains)/sizeof(gains[0]); i++) {
         gain_code = gains[i];
         for (unsigned capture = 0; capture < 3; capture++) {
+            stale = capture == 1;
             prepare_rx();
+            assert(!stale);
             assert(forced && selected == gain_code && !saturation);
         }
     }
