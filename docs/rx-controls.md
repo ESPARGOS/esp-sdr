@@ -54,6 +54,35 @@ curves include the digital-filter response.
 ESP32's widest settings exceed the characterized span;
 its numeric maximum uses code 8, while wide open selects code 0.
 
+## Receive calibration
+
+ESP-SDR uses the following calibration policy on all supported ESP32 families:
+
+- **IQ imbalance:** Calibrate at startup and reuse those corrections across
+  frequency changes. ESP-SDR does not repeat the loopback IQ sweep on retunes.
+  H2 retains four startup corrections, one for each RF gain group.
+- **DC offsets:** Remeasure at each new tuning frequency. If the PHY replaces
+  DC calibration in the background, remeasure at the requested frequency
+  before the next capture, even without another tuning command.
+- **Repeated frequency requests:** Requesting the same frequency does not
+  force another DC measurement unless the calibration has become stale.
+
+This describes calibration controlled by ESP-SDR. The PHY can still perform
+its own startup and background calibration, so “IQ calibration only once”
+is not an absolute guarantee for everything inside the chip. Startup and
+background calibration can still transmit; removing the retune IQ sweep does
+not make the whole firmware RF-silent.
+
+DC-measurement counters detect changes even when the PHY's temperature stamp
+stays unchanged. ESP32 and S2 compare their cached DC tables instead because
+internal PHY calls bypass the measurement wrappers. Recovery restores the
+receive settings and uses the PHY mutex to serialize DC measurement with
+tracking. The mutex is not held throughout acquisition: tracking can affect a
+capture already in progress, with recovery at the next capture preparation.
+S31 streaming stops acquisition, discards old DMA data, and starts a new stream
+epoch on recovery. H2 and both S31 profiles currently disable periodic PLL
+tracking; explicit PHY DC measurements still invalidate calibration.
+
 ## Rates and extended tuning
 
 C6 currently exposes only nominal 80 MS/s. Other tested clock/divider settings
@@ -65,24 +94,6 @@ All supported burst targets advertise `TUNEEXT` and answer `RANGE?` with
 attempt. Fractional MHz and values outside that software range are rejected.
 `main/common/rx_tuning.h` defines the shared limits. PLL lock is not a condition
 for accepting a tuning command.
-
-All supported targets refresh receive DC measurements at the requested frequency
-while retaining the IQ correction established at startup (four RF gain-group
-corrections on H2). This avoids the loopback IQ calibration tone previously generated on each frequency change.
-It does not suppress calibration performed by the PHY at startup or by its
-background temperature tracker.
-
-DC-measurement counters detect when the PHY replaces the receive calibration,
-including when its temperature stamp stays unchanged. ESP32 and S2 compare the
-actual cached DC tables because their PHY archives resolve DC calls internally. Before the
-next capture, the receiver refreshes DC at the requested LO and restores the
-receive settings. This also applies to an unchanged frequency. Recalibration
-uses the PHY mutex so its reference-frequency override cannot race the tracking
-task. It does not hold that mutex throughout acquisition: a capture interrupted
-by tracking can still be affected, with recovery at the next preparation.
-S31 streaming stops acquisition and starts a new stream epoch on recovery,
-discarding the old DMA data. H2 and both S31 profiles currently disable periodic
-PLL tracking; their DC invalidation hooks still cover explicit PHY measurements.
 
 C5 programs the requested frequency through `phy_set_chanfreq` after the DC
 measurement. Other backends may select a standard channel before direct PLL
