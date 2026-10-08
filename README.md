@@ -262,6 +262,12 @@ See [receive-control details](docs/rx-controls.md).
         <b>Zoltan Doczi</b>
       </a>
     </td>
+    <td align="center">
+      <a href="https://github.com/14sea">
+        <img src="https://github.com/14sea.png?size=160" width="80" height="80" alt="14sea"><br>
+        <b>14sea</b>
+      </a>
+    </td>
   </tr>
 </table>
 
