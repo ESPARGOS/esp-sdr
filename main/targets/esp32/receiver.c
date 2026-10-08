@@ -95,6 +95,7 @@ static bool acquire_iq(unsigned n, unsigned source, unsigned clock, unsigned *ca
         reply("ERR args\n");
         return false;
     }
+    if (rx_recalibration_stale()) prepare_rx();
     REG_WRITE(DUMP_CTRL, 0);
     for (unsigned j = 0; j < CAPACITY; j++) samples[j] = SENTINEL;
     filter_apply();

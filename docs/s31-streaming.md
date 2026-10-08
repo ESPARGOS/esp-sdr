@@ -165,8 +165,10 @@ Ethernet. `gain` retains the manual index for switching back. Update both the
 firmware and SoapyESPSDR for Gqrx's hardware AGC checkbox to work; older
 firmware is reported as not supporting AGC.
 
-Each frequency change performs fresh receive DC and loopback I/Q calibration
-at the selected frequency before starting the next acquisition epoch.
+Each frequency change refreshes receive DC calibration at the selected
+frequency while retaining startup I/Q correction. If the PHY replaces DC
+calibration in the background, reception restarts with refreshed DC correction
+and a new acquisition epoch. See [receive-control details](rx-controls.md).
 
 ## Analog DC correction and automatic bandwidth
 

@@ -1,5 +1,9 @@
 ESP32 family DC retuning and background calibration recovery — 2026-10-08
 
+Follow-up: dc-esp32-s31-followup.txt records original ESP32 hardware tests,
+a capture-path recovery repair, and repeated S31 UART tests. The table below
+describes the earlier validation stage.
+
 Implemented as separate changes, crediting 14sea's PR #9 investigation:
 https://github.com/ESPARGOS/esp-sdr/pull/9
 See pr9-review.txt for the original four-chip comparison and PR analysis.
