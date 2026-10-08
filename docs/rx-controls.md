@@ -66,14 +66,15 @@ attempt. Fractional MHz and values outside that software range are rejected.
 `main/common/rx_tuning.h` defines the shared limits. PLL lock is not a condition
 for accepting a tuning command.
 
-Out-of-channel requests calibrate on a standard channel before direct PLL
-programming. C5 calibrates at 2412 MHz for requests through 3000 MHz and at the
-nearest listed 20 MHz Wi-Fi channel centre above 3000 MHz (5180–5825 MHz).
-Ties select the lower channel. This reduces the DC offset and resulting AGC
-oscillation caused by using 5180 MHz throughout the upper band. Its direct path uses
-`phy_set_rf_freq_offset` with the calibrated crystal selector (`phy_param[49]`)
-to program the requested frequency after calibration.
-S31 likewise keeps arbitrary frequencies out of channel calibration.
+All supported targets refresh receive DC measurements at the requested frequency
+while retaining the IQ correction established at startup (four RF gain-group
+corrections on H2). This avoids the loopback IQ calibration tone previously generated on each frequency change.
+It does not suppress calibration performed by the PHY at startup or by its
+background temperature tracker.
+
+C5 programs the requested frequency through `phy_set_chanfreq` after the DC
+measurement. Other backends may select a standard channel before direct PLL
+programming; S31 also keeps arbitrary frequencies out of channel calibration.
 
 ### Experimental lower-band LO conversion
 

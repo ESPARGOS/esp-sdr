@@ -101,6 +101,8 @@ elseif(IDF_TARGET STREQUAL "esp32c61" OR IDF_TARGET STREQUAL "esp32s31")
 else()
     target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=chip_v7_set_chan_ana")
 endif()
+
+
 if(IDF_TARGET STREQUAL "esp32h2")
     target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=write_gain_mem")
 endif()

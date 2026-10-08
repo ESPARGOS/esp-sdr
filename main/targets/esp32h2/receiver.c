@@ -239,6 +239,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb));
     esp_phy_enable(PHY_MODEM_BT);
     rftest_open_clk();
+    rx_h2_calibrate_iq_at_boot();
     prepare_rx();
     esp_log_level_set("*",ESP_LOG_NONE);
     (void)usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(100));

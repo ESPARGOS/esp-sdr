@@ -21,6 +21,8 @@ static void release_manual_gain(void) {
     const unsigned reg = 0x600a702cu;
 #elif CONFIG_IDF_TARGET_ESP32C2
     const unsigned reg = 0x6004a02cu;
+#elif CONFIG_IDF_TARGET_ESP32
+    const unsigned reg = 0x3ff5c02cu;
 #else
     const unsigned reg = 0x6001c02cu;
 #endif
@@ -35,7 +37,6 @@ void __wrap_phy_chip_set_chan_ana(unsigned mhz) {
     __real_phy_chip_set_chan_ana(measurement_mhz ? measurement_mhz : mhz);
 }
 extern void phy_set_rx_gain_cal_dc(unsigned, unsigned, void *, void *);
-extern void phy_set_rx_gain_cal_iq(unsigned, unsigned, void *, unsigned, unsigned, unsigned);
 extern void phy_adc_rate_cal_rxdc(void);
 extern void phy_set_rx_gain_table(unsigned, unsigned);
 void rx_recalibrate(unsigned mhz) {
@@ -44,16 +45,16 @@ void rx_recalibrate(unsigned mhz) {
     __real_phy_chip_set_chan_ana(mhz);
     unsigned band = phy_param[42];
     uint32_t *flags = (void *)(phy_param + 148);
-    *flags &= ~0x680u;
+    /* Retain the PHY's installed IQ coefficients. Loopback IQ calibration
+     * emits a tone through the antenna. Refresh DC without that TX step. */
+    *flags &= ~0x280u;
     if (band) {
         /* Fill every interpolation bin with fresh measurements at this LO. */
         phy_set_rx_gain_cal_dc(0, 1, phy_param + 384, phy_param + 912);
-        phy_set_rx_gain_cal_iq(0, mhz, phy_param + 222, 1, 0, 0);
     } else {
         phy_set_rx_gain_cal_dc(0, 1, phy_param + 312, phy_param + 896);
         phy_adc_rate_cal_rxdc();
         phy_set_rx_gain_cal_dc(1, 1, phy_param + 348, phy_param + 904);
-        phy_set_rx_gain_cal_iq(0, mhz, phy_param + 172, 0, 0, 0);
     }
     *flags |= 0x480u;
     phy_set_rx_gain_table(mhz, 0);
@@ -67,14 +68,13 @@ void __wrap_phy_set_channel_rfpll_freq(unsigned mhz, unsigned crystal, unsigned 
     __real_phy_set_channel_rfpll_freq(measurement_mhz ? measurement_mhz : mhz, crystal, mode);
     if (measurement_mhz) (void)rx_pll_recover(measurement_mhz);
 }
-extern void phy_rxiq_cal_init(unsigned, unsigned, unsigned);
 extern void phy_set_rx_gain_table(unsigned, unsigned);
 void rx_recalibrate(unsigned mhz) {
     measurement_mhz = mhz;
     release_manual_gain();
     uint32_t *flags = (void *)(phy_param + 164);
-    *flags &= ~0x680u;
-    phy_rxiq_cal_init(0, 0, 0);
+    /* Preserve the startup IQ coefficients; expire only DC/table caches. */
+    *flags &= ~0x280u;
     phy_set_rx_gain_table(mhz, 0);
     measurement_mhz = 0;
 }
@@ -87,35 +87,44 @@ void __wrap_chip_v7_set_chan_ana(unsigned channel) {
 }
 extern void set_rx_gain_cal_iq(void *, unsigned);
 extern void force_rx_gain(unsigned, unsigned);
-static uint16_t fresh_iq[4];
-static unsigned fresh_iq_valid;
+static uint16_t startup_iq[4];
+static unsigned startup_iq_valid;
 extern void __real_write_gain_mem(uint32_t, uint32_t, unsigned);
 void __wrap_write_gain_mem(uint32_t a, uint32_t b, unsigned index) {
-    if (fresh_iq_valid) {
+    if (startup_iq_valid) {
         /* H2 RF gain groups C7/D7/E7/F7 occupy word 1 bits 20..21.
          * Loopback measures a phase/amplitude pair for each group. The stock
          * efuse helper supplies only TWO BYTES at phy_param+60; keep that
          * layout intact and install the measured pair in each gain word. */
         unsigned group = (b >> 20) & 3u;
-        uint16_t iq = fresh_iq[group];
+        uint16_t iq = startup_iq[group];
         b = (b & ~0x1fffu) | ((iq >> 1) & 0x1f80u) | (iq & 0x7fu);
     }
     __real_write_gain_mem(a, b, index);
 }
 extern void set_rx_gain_table(void);
+/* Keep the four RF gain-group corrections established at startup. The single
+ * efuse pair is not an equivalent replacement on this PHY. This is the existing
+ * startup loopback step, now explicit and never repeated for a user retune. */
+void rx_h2_calibrate_iq_at_boot(void) {
+    if (startup_iq_valid) return;
+    force_rx_gain(0, 0);
+    phy_set_freq(2412, 0);
+    uint32_t iq_control = REG_READ(0x600a0450u);
+    set_rx_gain_cal_iq(startup_iq, 0);
+    REG_WRITE(0x600a0450u, iq_control);
+    startup_iq_valid = 1;
+}
 void rx_recalibrate(unsigned mhz) {
     measurement_mhz = mhz;
     force_rx_gain(0, 0);
     phy_set_freq(mhz, 0);
-    uint32_t iq_control = REG_READ(0x600a0450u);
-    set_rx_gain_cal_iq(fresh_iq, 0);
-    /* The standalone H2 measurement leaves the IQ estimator override set. */
-    REG_WRITE(0x600a0450u, iq_control);
-    fresh_iq_valid = 1;
-    *(uint32_t *)(phy_param + 52) &= ~0x300u;
+    /* Keep startup IQ; expire only receive DC. */
+    *(uint32_t *)(phy_param + 52) &= ~0x100u;
     set_rx_gain_table();
     measurement_mhz = 0;
 }
+
 #else
 #include "rx_lo.h"
 extern void __real_chip_v7_set_chan_ana(unsigned);
@@ -155,10 +164,8 @@ void __wrap_chip_v7_set_chan_ana(unsigned channel) {
     if (measurement_mhz) measurement_tune();
 }
 #if CONFIG_IDF_TARGET_ESP32C6
-extern void rxiq_cal_init(unsigned, unsigned, unsigned);
 extern void set_rx_gain_table(void);
 #elif CONFIG_IDF_TARGET_ESP32C2
-extern void rxiq_cal_init(unsigned, unsigned, unsigned);
 extern void set_rx_gain_table_new(unsigned, unsigned, unsigned, unsigned);
 #else
 extern void set_rx_gain_table(unsigned, unsigned);
@@ -171,22 +178,23 @@ void rx_recalibrate(unsigned mhz) {
     release_manual_gain();
     measurement_tune();
 #if CONFIG_IDF_TARGET_ESP32C6
-    *(uint32_t *)(phy_param + 164) &= ~0x680u;
-    rxiq_cal_init(0, 0, 0);
+    /* Invalidate DC/table state, preserving IQ-valid bit 0x400. */
+    *(uint32_t *)(phy_param + 164) &= ~0x280u;
     set_rx_gain_table();
 #elif CONFIG_IDF_TARGET_ESP32C2
-    *(uint32_t *)(phy_param + 328) &= ~0x700u;
-    rxiq_cal_init(0, 0, 0);
+    /* C2 uses bit 0x400 for IQ validity, like C6, at a different offset. */
+    *(uint32_t *)(phy_param + 328) &= ~0x300u;
     set_rx_gain_table_new(rx_lo_plan(mhz).mhz, 0, 1, 1);
 #elif CONFIG_IDF_TARGET_ESP32
-    /* Gain-table generation, BT/Wi-Fi DC, IQ and gain-memory installation. */
-    chip7_sleep_params[0] &= ~0x20720u;
+    /* Rebuild BT/Wi-Fi DC and gain memory, retaining IQ-valid bit 0x400. */
+    chip7_sleep_params[0] &= ~0x20320u;
     set_rx_gain_table(rx_lo_plan(mhz).mhz, 0);
 #elif CONFIG_IDF_TARGET_ESP32S2
-    chip7_sleep_params[0] &= ~0x20640u;
+    chip7_sleep_params[0] &= ~0x20240u;
     set_rx_gain_table(rx_lo_plan(mhz).mhz, 0);
 #elif CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32S3
-    *(uint32_t *)(phy_param + 288) &= ~0x600u;
+    /* set_rx_gain_param skips the TX-tone IQ step while 0x400 is set. */
+    *(uint32_t *)(phy_param + 288) &= ~0x200u;
     set_rx_gain_table(rx_lo_plan(mhz).mhz, 0);
 #else
 #error RX recalibration ABI has not been qualified for this target
