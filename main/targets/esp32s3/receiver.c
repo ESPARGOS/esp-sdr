@@ -217,6 +217,24 @@ static void handle_command(char *line) {
         else if(sscanf(line,"ADCCLOCK %u %c",&n,&extra)==1 && n<=4) {probe_adc=n;reply("OK\n");}
         else if(!strcmp(line,"ADCCLOCK?")){char h[64];snprintf(h,sizeof(h),"ADC %u\n",rom_chip_i2c_readReg(0x66,0,4));reply(h);}
 #endif
+#if CONFIG_ESP_SDR_LCD_ES3C28P
+        else if(!strcmp(line,"SCREEN?")) {
+            /* "SCREEN <w> <h> <crc32>\n" + w*h big-endian RGB565 pixels, top row first. */
+            static uint16_t row[LCD_WATERFALL_W];
+            uint32_t crc=0;
+            for(int y=0;y<LCD_WATERFALL_H;y++) {
+                lcd_waterfall_render_row(y,row);
+                crc=esp_rom_crc32_le(crc,(const uint8_t *)row,sizeof(row));
+            }
+            char h[64];
+            snprintf(h,sizeof(h),"SCREEN %d %d %08" PRIx32 "\n",LCD_WATERFALL_W,LCD_WATERFALL_H,crc);
+            bool ok=send_bytes(h,strlen(h));
+            for(int y=0;y<LCD_WATERFALL_H && ok;y++) {
+                lcd_waterfall_render_row(y,row);
+                ok=send_bytes(row,sizeof(row));
+            }
+        }
+#endif
         else if(!strcmp(line,"CAPS")) {
             reply("CAPS RXLIMITS SERIALLEASE "
 #if CONFIG_ESP_SDR_UART_ENABLED
@@ -283,6 +301,11 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     ESP_ERROR_CHECK(esp_wifi_set_channel(1,WIFI_SECOND_CHAN_NONE));
+#if CONFIG_ESP_SDR_LCD_ES3C28P
+    /* Standalone view: whole 2.4 GHz band through the widest analog filter. */
+    frequency_mhz=2440;
+    rx_filter=rx_bandwidth_dcap(0);
+#endif
     prepare_rx();
     esp_log_level_set("*",ESP_LOG_NONE);
     /* USB may be unplugged when the host uses the UART bridge. */

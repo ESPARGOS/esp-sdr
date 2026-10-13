@@ -32,8 +32,8 @@
 #define LCD_MIRROR_Y 0
 #define LCD_INVERT   1   /* IPS panels usually need INVON. */
 
-#define W 320
-#define H 240
+#define W LCD_WATERFALL_W
+#define H LCD_WATERFALL_H
 #define STRIPE 16
 #define STATUS_H 12
 #define SPEC_Y STATUS_H
@@ -46,7 +46,8 @@
 #define NFFT 512
 #define LOG2_NFFT 9
 #define SPEC_SPAN_DB 50.0f   /* spectrum panel vertical range */
-#define WF_SPAN_DB 30.0f     /* waterfall colour range above floor */
+#define WF_LO_DB 4.0f        /* waterfall colour range: floor-LO .. floor-LO+SPAN */
+#define WF_SPAN_DB 20.0f
 
 _Static_assert(H % STRIPE == 0, "stripes must tile the screen");
 
@@ -267,7 +268,7 @@ static void compute(const volatile uint32_t *words, unsigned n) {
     uint8_t *row = wf + wf_head * W;
     for (int c = 0; c < W; c++) {
         hold_db[c] = fmaxf(col_db[c], hold_db[c] - 0.3f);
-        float v = (col_db[c] - floor_db + 3) / WF_SPAN_DB * 255;
+        float v = (col_db[c] - floor_db + WF_LO_DB) / WF_SPAN_DB * 255;
         row[c] = v < 0 ? 0 : v > 255 ? 255 : (uint8_t)v;
         float y = (top - col_db[c]) / SPEC_SPAN_DB * (SPEC_H - 1);
         col_y[c] = y < 0 ? 0 : y > SPEC_H - 1 ? SPEC_H - 1 : (uint8_t)y;
@@ -284,7 +285,8 @@ static int freq_col(int off_mhz, unsigned rate) {
 
 static unsigned tick_step(unsigned rate) { return rate >= 80 ? 10 : rate >= 40 ? 5 : 2; }
 
-static void render_row(int y, uint16_t *row) {
+void lcd_waterfall_render_row(int y, uint16_t *row) {
+    assert(y >= 0 && y < H && label_rate > 0);
     static const uint16_t black = 0;
     uint16_t grid = rgb(48, 48, 48), trace = rgb(255, 255, 160), fill = rgb(20, 70, 90),
              hold = rgb(255, 120, 40), text = rgb(220, 220, 220);
@@ -341,7 +343,7 @@ void lcd_waterfall_frame(const volatile uint32_t *words, unsigned n, unsigned ce
 
     for (int y0 = 0; y0 < H; y0 += STRIPE) {
         uint16_t *buf = acquire_stripe();
-        for (int r = 0; r < STRIPE; r++) render_row(y0 + r, buf + r * W);
+        for (int r = 0; r < STRIPE; r++) lcd_waterfall_render_row(y0 + r, buf + r * W);
         push_stripe(y0);
     }
     drain();
