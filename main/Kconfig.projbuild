@@ -43,4 +43,12 @@ menu "ESP-SDR transport"
         default 12 if IDF_TARGET_ESP32C5
         default 44
 
+    config ESP_SDR_LCD_ES3C28P
+        bool "Standalone LCD waterfall (LCDWiki ES3C28P board)"
+        depends on IDF_TARGET_ESP32S3
+        default n
+        help
+            Draw a live spectrum and waterfall on the ES3C28P's 2.8" ILI9341V
+            LCD whenever no serial host holds the radio.
+
 endmenu

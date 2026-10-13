@@ -19,6 +19,9 @@
 
 #include "burst_serial.h"
 #include "rx_tuning.h"
+#if CONFIG_ESP_SDR_LCD_ES3C28P
+#include "lcd_waterfall.h"
+#endif
 
 /* Vendor S3 adctrig uses this 64 KiB aperture with MAC_DUMP_USAGE=4.
  * Keep both its DRAM and IRAM aliases out of the heap and static sections. */
@@ -124,8 +127,8 @@ static unsigned probe_source,probe_clock,probe_adc=4;
 extern void rom_dac_rate_set(unsigned);
 static bool probe_capture;
 #endif
-static bool capture(unsigned n,unsigned divider,unsigned format) {
-    if(divider!=0 && divider!=1 && divider!=6){reply("ERR rate\n");return false;}
+/* Fill IQ_BUFFER with n raw IQ10 words; false on timeout. */
+static bool capture_raw(unsigned n,unsigned divider,uint32_t *elapsed_us) {
     prepare_rx();
     
     for(unsigned j=0;j<n;j++)IQ_BUFFER[j]=0xa5a0055au;
@@ -161,10 +164,18 @@ static bool capture(unsigned n,unsigned divider,unsigned format) {
 #ifdef SAMPLE_RATE_PROBE
     if(probe_adc<4)rom_chip_i2c_writeReg(0x66,0,4,adc_saved);
 #endif
-    if(!done){reply("ERR capture_timeout\n");return false;}
+    *elapsed_us=elapsed;
+    if(!done)return false;
     for(unsigned j=0;j<n;j++) {
-        if(IQ_BUFFER[j]==0xa5a0055au){reply("ERR capture_timeout\n");return false;}
+        if(IQ_BUFFER[j]==0xa5a0055au)return false;
     }
+    return true;
+}
+
+static bool capture(unsigned n,unsigned divider,unsigned format) {
+    if(divider!=0 && divider!=1 && divider!=6){reply("ERR rate\n");return false;}
+    uint32_t elapsed;
+    if(!capture_raw(n,divider,&elapsed)){reply("ERR capture_timeout\n");return false;}
     size_t bytes=wire_size(n,format);
     if(format==16)pack_iq8(n);else if(format==20)pack_iq(n);
     uint32_t crc=esp_rom_crc32_le(0,(const uint8_t *)IQ_BUFFER,bytes);
@@ -278,13 +289,24 @@ void app_main(void) {
     (void)usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(100));
     ESP_ERROR_CHECK(usb_serial_jtag_driver_uninstall());
     burst_serial_init();
+#if CONFIG_ESP_SDR_LCD_ES3C28P
+    lcd_waterfall_init();
+#endif
     char line[128];
     int owner=-1;
     int64_t lease_deadline=0;
     for(;;) {
         if(esp_timer_get_time()>=lease_deadline)owner=-1;
         int status=burst_serial_poll_line(line,sizeof(line));
-        if(!status){vTaskDelay(1);continue;}
+        if(!status){
+#if CONFIG_ESP_SDR_LCD_ES3C28P
+            /* Standalone display while no serial host holds the radio. */
+            uint32_t elapsed;
+            if(owner<0 && capture_raw(IQ_WORDS,0,&elapsed))
+                lcd_waterfall_frame(IQ_BUFFER,IQ_WORDS,frequency_mhz,80);
+#endif
+            vTaskDelay(1);continue;
+        }
         int port=burst_serial_port();
         if(owner>=0 && owner!=port){reply("ERR busy\n");continue;}
         if(status<0){reply("ERR command_length\n");continue;}

@@ -19,6 +19,8 @@ elseif(NOT IDF_TARGET STREQUAL "esp32")
 endif()
 
 if(IDF_TARGET STREQUAL "esp32s3")
+    # Optional ES3C28P LCD; CONFIG_* is unknown during requirement expansion.
+    list(APPEND dependencies esp_lcd esp_driver_spi esp_driver_gpio)
     list(APPEND probes SAMPLE_RATE_PROBE FILTER_REGISTER_PROBE S3_RF_PROBE)
 elseif(IDF_TARGET STREQUAL "esp32c5" OR IDF_TARGET STREQUAL "esp32c6" OR IDF_TARGET STREQUAL "esp32c61")
     set(receiver "families/c5_c6_c61/receiver.c")
@@ -32,8 +34,14 @@ if(IDF_TARGET STREQUAL "esp32c61" OR IDF_TARGET STREQUAL "esp32s31")
     list(APPEND sources "common/burst_gain_table.c")
 endif()
 
+set(include_dirs "common" "${target_dir}" "diagnostics")
+if(CONFIG_ESP_SDR_LCD_ES3C28P)
+    list(APPEND sources "display/lcd_waterfall.c")
+    list(APPEND include_dirs "display")
+endif()
+
 idf_component_register(SRCS "${receiver}" ${sources}
-    PRIV_INCLUDE_DIRS "common" "${target_dir}" "diagnostics"
+    PRIV_INCLUDE_DIRS ${include_dirs}
     REQUIRES ${dependencies})
 
 # Keep the linker guard beside the backend whose SRAM aperture it protects.
