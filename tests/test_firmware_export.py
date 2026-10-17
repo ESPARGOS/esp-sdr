@@ -48,6 +48,19 @@ class FirmwareExport(unittest.TestCase):
         self.assertEqual(variant['application'], 'soapysdr')
         self.assertEqual(variant['target'], 'esp32s31')
 
+    def test_korvo_profile_identifies_its_application_and_embeds_its_version(self):
+        (self.build / 'CMakeCache.txt').write_text('ESP_SDR_KORVO:BOOL=ON\n')
+        (self.build / 'config/sdkconfig.json').write_text(json.dumps({'IDF_TARGET': 'esp32s31'}))
+        self.args['extra_esptool_args']['chip'] = 'esp32s31'
+        self.save_args()
+        record = {'revision': 'a' * 40, 'build_date': '2026-10-10', 'build_timestamp': '2026-10-10T08:00:00Z', 'profile': 'esp32s31-korvo'}
+        (self.build / 'app.bin').write_bytes(b'\0' * 64 + b'ESP-SDR-VERSION:' + json.dumps(record).encode() + b'\0')
+        path = exporter.export(self.build, self.root / 'output', 'esp32s31-korvo', 'Korvo', 'test', True)
+        variant = json.loads(path.read_text())['variants']['esp32s31-korvo']
+        self.assertEqual(variant['application'], 'display')
+        self.assertEqual(variant['git_revision'], 'a' * 40)
+        self.assertEqual(variant['build_date'], '2026-10-10')
+
     def test_build_date_from_image_descriptor(self):
         data = bytearray(144)
         data[32:36] = bytes.fromhex('3254cdab')

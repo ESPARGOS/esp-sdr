@@ -1,0 +1,4 @@
+dependencies:
+  lvgl/lvgl: "9.6.0"
+  espressif/esp_lvgl_port: "^2.9.0"
+  espressif/esp_lcd_touch_gt1151: "^1.1.1"

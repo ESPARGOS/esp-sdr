@@ -1,0 +1,7 @@
+# SIMD kernels run from SRAM, independent of PSRAM/flash cache misses.
+[mapping:esp_sdr_korvo]
+archive: libkorvo.a
+entries:
+    s31_fft_rnd (noflash)
+    s31_unpack (noflash)
+    s31_power (noflash)

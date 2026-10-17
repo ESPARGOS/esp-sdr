@@ -45,7 +45,7 @@ While we have a very good understanding of how the IQ sampling functionality wor
 | ESP32-P4 | ❌ | — | — | — | — |
 | ESP32-S2 | ✅ | USB-OTG CDC | GPIO43 / GPIO44 | 4 MB | — |
 | ESP32-S3 | ✅ | Serial/JTAG | GPIO43 / GPIO44 | 2 MB | [Continuous decimated I/Q over USB (15.625–250 kSa/s)](#s3-streaming) |
-| ESP32-S31 | ✅ | Serial/JTAG | GPIO58 / GPIO59 | 2 MB | [High Speed USB / Ethernet streaming at up to 40 MSa/s (experimental)](#s31-streaming) |
+| ESP32-S31 | ✅ | Serial/JTAG | GPIO58 / GPIO59 | 2 MB | [High Speed USB / Ethernet streaming at up to 40 MSa/s (experimental)](#s31-streaming) · [Stand-alone LCD spectrum analyzer on the Korvo-1 board](#s31-korvo) |
 
 ✅ Supported · 🚧 Not yet supported · ❌ Unsupported (no integrated radio).
 
@@ -69,6 +69,23 @@ status, with rates up to 20 MSa/s over USB and 40 MSa/s over Ethernet using
 for ESP-WebSDR. See [streaming build, architecture, and protocol](docs/s31-streaming.md).
 
 ![Gqrx displaying an LTE signal at 2.63 GHz, continuously sampled at 40 MSa/s over Ethernet with an ESP32-S31 and SoapyESPSDR.](docs/gqrx-esp-sdr.png)
+
+<a id="s31-korvo"></a>
+
+### **ESP32-S31-Korvo-1**: Stand-alone touch spectrum analyzer
+
+The separate **`esp32s31-korvo`** firmware turns the ESP32-S31-Korvo-1 board
+with its 4.3″ 800×480 touch display into a handheld spectrum analyzer that
+needs no computer. One core captures I/Q snapshots and runs the SIMD FFTs,
+the other draws the spectrum and waterfall at the panel's 35 Hz refresh and
+serves the LVGL touch controls. A toolbar of large buttons opens sheets over
+the waterfall for tuning (keypad, steps, presets), span
+(sample rate, FFT size, zero-IF handling), RX (AGC or manual gain, analog
+bandwidth) and view (floor, range, averaging, detector, max hold, auto
+scale) while the spectrum stays live. Build it with `-DESP_SDR_KORVO=ON`; see
+[the Korvo analyzer guide](docs/korvo.md).
+
+![ESP-SDR spectrum analyzer on the ESP32-S31-Korvo-1 LCD](docs/korvo-display.png)
 
 <a id="s3-streaming"></a>
 
@@ -169,6 +186,8 @@ idf.py -B build-s3 -p /dev/ttyACM0 flash
 ```
 
 Substitute the target and paths for your chip. S31 also requires `idf.py --preview`.
+The S31 streaming and Korvo LCD applications are separate profiles with their
+own SDK defaults and `-DESP_SDR_STREAMING=ON` or `-DESP_SDR_KORVO=ON`.
 
 The C2 firmware uses a **26 MHz crystal**, as on the tested ESP8684H board.
 For a 40 MHz board, select `CONFIG_XTAL_FREQ_40=y` in menuconfig and rebuild;
@@ -190,7 +209,12 @@ See [H2 backend and validation](docs/esp32h2.md).
   linker guard for its capture SRAM. CMake selects only the requested target.
 - `main/targets/esp32s31/burst/`: serial IQ capture and on-chip FFT firmware.
 - `main/targets/esp32s31/streaming/`: continuous USB/Ethernet IQ application for
-  SoapyESPSDR. Both S31 firmware variants share `main/targets/esp32s31/tuning.h`.
+  SoapyESPSDR. The S31 firmware variants share `main/targets/esp32s31/tuning.h`;
+  the burst and LCD variants also share the snapshot engine in
+  `main/targets/esp32s31/dump.h`.
+- `main/targets/esp32s31/korvo/`: LCD spectrum analyzer for the
+  ESP32-S31-Korvo-1 (LVGL, RGB panel, GT1151 touch), built with
+  `-DESP_SDR_KORVO=ON` and its own registry components lock.
 - `main/families/c5_c6_c61/`: receiver shared by C5, C6, and C61; its `chip.h`
   comes from the selected target directory.
 - `main/common/`: burst serial transport, gain control, limits, and bandwidth

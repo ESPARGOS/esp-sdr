@@ -37,7 +37,7 @@ def firmware_version(data):
         datetime.strptime(stamp, '%Y-%m-%dT%H:%M:%SZ')
         if value['build_date'] != stamp[:10] or not re.fullmatch(r'(?:[a-f0-9]{40}(?:-dirty)?|unknown)', value['revision']):
             raise ValueError('Invalid firmware metadata')
-        if not re.fullmatch(r'esp32[a-z0-9]*', value['profile']):
+        if not re.fullmatch(r'esp32[a-z0-9]*(?:-[a-z0-9]+)?', value['profile']):
             raise ValueError('Invalid firmware profile')
         return value
     except (KeyError, TypeError, UnicodeDecodeError, ValueError) as exc:
@@ -90,6 +90,8 @@ def export(build, output, board, label, version, allow_larger_flash=False):
         flash_settings=settings, esptool_args=args['extra_esptool_args'], parts=parts)})
     if re.search(r'^ESP_SDR_STREAMING:BOOL=ON$', cache, re.MULTILINE):
         manifest['variants'][board]['application'] = 'soapysdr'
+    elif re.search(r'^ESP_SDR_KORVO:BOOL=ON$', cache, re.MULTILINE):
+        manifest['variants'][board]['application'] = 'display'
     if target == "esp32c2":
         manifest["variants"][board]["xtal_mhz"] = config["XTAL_FREQ"]
     dates = [date for _, data in payloads if (date := firmware_build_date(data))]

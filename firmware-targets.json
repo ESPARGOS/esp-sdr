@@ -84,12 +84,22 @@
     {
       "id": "esp32s31-stream",
       "target": "esp32s31",
-      "label": "ESP32-S31 Function-CoreBoard \u00b7 Ethernet / USB for SoapyESPSDR",
+      "label": "ESP32-S31 Function-CoreBoard · Ethernet / USB for SoapyESPSDR",
       "idf_ref": "c712a0dde385d659a1470a136251980d31a70bc1",
       "allow_larger_flash": true,
       "preview": true,
       "streaming": true,
       "sdkconfig": "sdkconfig.defaults.esp32s31-stream"
+    },
+    {
+      "id": "esp32s31-korvo",
+      "target": "esp32s31",
+      "label": "ESP32-S31-Korvo-1 · LCD spectrum analyzer",
+      "idf_ref": "c9d6c1e7e2dcf879f332c0787afa487c76c3bc28",
+      "allow_larger_flash": true,
+      "preview": true,
+      "korvo": true,
+      "sdkconfig": "sdkconfig.defaults.esp32s31-korvo"
     }
   ],
   "unavailable": {}
