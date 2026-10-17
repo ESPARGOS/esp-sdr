@@ -194,7 +194,8 @@ size_t burst_serial_try_send(const void *data, size_t size) {
             sent = usb_serial_jtag_ll_write_txfifo(p + done, size - done > 64 ? 64 : size - done);
             usb_serial_jtag_ll_txfifo_flush();
 #elif CONFIG_IDF_TARGET_ESP32S2
-            sent = esp_usb_console_write_direct(p + done, size - done > S2_USB_CHUNK ? S2_USB_CHUNK : size - done);
+            sent = esp_usb_console_write_direct(p + done,
+                                                size - done > S2_USB_CHUNK ? S2_USB_CHUNK : size - done);
 #endif
         }
         if (sent <= 0) break;
@@ -247,6 +248,11 @@ static void serve_reply(const char *text) {
     (void)burst_serial_send(text, strlen(text));
 }
 
+static void (*serve_idle)(bool host_active);
+void burst_serial_set_idle(void (*idle)(bool host_active)) {
+    serve_idle = idle;
+}
+
 void burst_serial_serve(void (*handle)(char *line)) {
     char line[128];
     int owner = -1;
@@ -255,6 +261,7 @@ void burst_serial_serve(void (*handle)(char *line)) {
         if (esp_timer_get_time() >= lease_deadline) owner = -1;
         int status = burst_serial_poll_line(line, sizeof(line));
         if (!status) {
+            if (serve_idle) serve_idle(owner >= 0);
             vTaskDelay(1);
             continue;
         }
@@ -268,6 +275,7 @@ void burst_serial_serve(void (*handle)(char *line)) {
             continue;
         }
         owner = port;
+        if (serve_idle) serve_idle(true);
         if (!strcmp(line, "RELEASE")) {
             serve_reply("OK\n");
             owner = -1;

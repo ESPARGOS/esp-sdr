@@ -23,6 +23,9 @@
 #include "rx_tuning.h"
 #include "rx_lo.h"
 #include "esp_rom_sys.h"
+#if CONFIG_ESP_SDR_OLED_ENABLED
+#include "oled_waterfall.h"
+#endif
 
 /* Pinned C3 librftest adctrig: 64 KiB at 0x3fcb0000, usage=2,
  * allocation bit 3. Reserve the FULL 128 KiB bank and its IRAM alias:
@@ -96,9 +99,14 @@ static void prepare_rx(void) {
 
 #include "burst_capture.h"
 static portMUX_TYPE capture_mux = portMUX_INITIALIZER_UNLOCKED;
+/* The OLED loop captures without a host; keep its failures off the wire. */
+static bool capture_quiet;
+static void capture_error(const char *s) {
+    if (!capture_quiet) reply(s);
+}
 static bool acquire_iq(unsigned n, unsigned divider, unsigned *capture_us) {
     if (divider != 0 && divider != 1 && divider != 6) {
-        reply("ERR rate\n");
+        capture_error("ERR rate\n");
         return false;
     }
     prepare_rx();
@@ -129,12 +137,12 @@ static bool acquire_iq(unsigned n, unsigned divider, unsigned *capture_us) {
     taskEXIT_CRITICAL(&capture_mux);
     rx_filter_restore();
     if (!done) {
-        reply("ERR capture_timeout\n");
+        capture_error("ERR capture_timeout\n");
         return false;
     }
     for (unsigned j = 0; j < n; j++) {
         if (IQ_BUFFER[j] == 0xa5a0055au) {
-            reply("ERR capture_incomplete\n");
+            capture_error("ERR capture_incomplete\n");
             return false;
         }
     }
@@ -147,6 +155,29 @@ static bool spectrum_acquire(unsigned n, unsigned rate, const uint32_t **data, u
     *data = IQ_BUFFER;
     return ok;
 }
+
+#if CONFIG_ESP_SDR_OLED_ENABLED
+/* Widest analog filter (about 62 MHz) for the display's 67.5 MHz span;
+ * the host's LPF/BANDWIDTH choice is untouched. */
+static bool oled_acquire(unsigned n, unsigned rate, const uint32_t **data, unsigned *elapsed) {
+    int saved = rx_filter;
+    rx_filter = rx_bandwidth_dcap(RX_BANDWIDTH_MAX);
+    capture_quiet = true;
+    bool ok = spectrum_acquire(n, rate, data, elapsed);
+    capture_quiet = false;
+    rx_filter = saved;
+    return ok;
+}
+static void oled_retune(unsigned mhz) {
+    if (frequency_valid(mhz)) {
+        frequency_mhz = mhz;
+        rx_ready = false;
+    }
+}
+static void oled_idle(bool host_active) {
+    oled_waterfall_step(frequency_mhz, host_active, oled_acquire, oled_retune);
+}
+#endif
 
 #include "ring_probe.h"
 
@@ -166,6 +197,9 @@ static void handle_command(char *line) {
 #ifdef RING_PROBE
     if (ring_probe_command(line)) return;
 #endif
+#if CONFIG_ESP_SDR_OLED_ENABLED
+    if (oled_waterfall_command(line)) return;
+#endif
     if (spectrum_command(line, frequency_mhz, spectrum_acquire)) return;
     if (limits_command(line)) return;
     if (gain_command(line)) return;
@@ -177,7 +211,11 @@ static void handle_command(char *line) {
 #if CONFIG_ESP_SDR_UART_ENABLED
               "DUALSERIAL "
 #endif
-              "TUNEEXT RX40 RX16 LPFANA GAIN HWAGC IQ8\n");
+              "TUNEEXT RX40 RX16 LPFANA GAIN HWAGC IQ8"
+#if CONFIG_ESP_SDR_OLED_ENABLED
+              " OLED"
+#endif
+              "\n");
     } else if (sscanf(line, "BANDWIDTH %u %c", &n, &extra) == 1 &&
                (!n || (n >= RX_BANDWIDTH_MIN && n <= RX_BANDWIDTH_MAX))) {
         rx_filter = rx_bandwidth_dcap(n);
@@ -222,5 +260,8 @@ void app_main(void) {
     (void)usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(100));
     ESP_ERROR_CHECK(usb_serial_jtag_driver_uninstall());
     burst_serial_init();
+#if CONFIG_ESP_SDR_OLED_ENABLED
+    if (oled_waterfall_init(frequency_mhz)) burst_serial_set_idle(oled_idle);
+#endif
     burst_serial_serve(handle_command);
 }

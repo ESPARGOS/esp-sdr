@@ -54,4 +54,68 @@ menu "ESP-SDR transport"
         default 12 if IDF_TARGET_ESP32C5
         default 44
 
+    config ESP_SDR_OLED_ENABLED
+        bool "Stand-alone spectrum/waterfall on a 72x40 SSD1306 OLED"
+        depends on IDF_TARGET_ESP32C3
+        default n
+        help
+            ESP32-C3 SuperMini boards with the 0.42 inch OLED. While no serial
+            host holds the lease, the receiver draws a live spectrum and
+            waterfall. If no panel answers on I2C the feature stays idle.
+            The I2C and button GPIOs are removed from browser GPIO control.
+            See docs/displays.md (sdkconfig.defaults.c3oled).
+
+    config ESP_SDR_OLED_SDA
+        int "OLED I2C SDA GPIO"
+        depends on ESP_SDR_OLED_ENABLED
+        default 5
+
+    config ESP_SDR_OLED_SCL
+        int "OLED I2C SCL GPIO"
+        depends on ESP_SDR_OLED_ENABLED
+        default 6
+
+    config ESP_SDR_OLED_BUTTON
+        int "Frequency/view button GPIO (active low)"
+        depends on ESP_SDR_OLED_ENABLED
+        default 9
+
+    config ESP_SDR_OLED_COLUMN_OFFSET
+        int "First visible SSD1306 column"
+        depends on ESP_SDR_OLED_ENABLED
+        range 0 56
+        default 28
+
+    config ESP_SDR_OLED_FLIP
+        bool "Rotate the OLED image by 180 degrees"
+        depends on ESP_SDR_OLED_ENABLED
+        default n
+
+    config ESP_SDR_DINMETER
+        bool "M5Stack Din Meter stand-alone spectrum/waterfall"
+        depends on IDF_TARGET_ESP32S3
+        default n
+        help
+            ST7789 240x135 LCD, rotary encoder (A=41, B=40, button 42) and
+            power hold on GPIO46. While no serial host holds the lease the
+            receiver draws a live spectrum and waterfall; the knob tunes,
+            a press switches it to span adjustment and back.
+            See docs/displays.md (sdkconfig.defaults.dinmeter).
+
+    config ESP_SDR_DINMETER_LCD_FLIP
+        bool "Rotate the Din Meter LCD image by 180 degrees"
+        depends on ESP_SDR_DINMETER
+        default n
+
+    config ESP_SDR_DINMETER_ENCODER_REVERSE
+        bool "Reverse the encoder direction"
+        depends on ESP_SDR_DINMETER
+        default n
+
+    config ESP_SDR_DINMETER_COUNTS_PER_DETENT
+        int "Quadrature counts per encoder detent"
+        depends on ESP_SDR_DINMETER
+        range 1 8
+        default 4
+
 endmenu
