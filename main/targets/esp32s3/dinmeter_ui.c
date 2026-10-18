@@ -595,6 +595,29 @@ void dinmeter_step(unsigned center_khz, bool host_active, dinmeter_run_fn run, d
     render(center_khz, false);
 }
 
+bool dinmeter_passive_command(const char *line) {
+    if (strcmp(line, "DMWF")) return false;
+    /* Header, then WF_ROWS lines of W hex palette levels, newest line first. */
+    char reply[2 * W + 2];
+    if (!waterfall) {
+        burst_serial_send("DMWF 0 0\n", 9);
+        return true;
+    }
+    int n = snprintf(reply, sizeof(reply), "DMWF %u %u lines=%u floor=%d\n", WF_ROWS, W, lines, floor_q4 >> 4);
+    burst_serial_send(reply, n);
+    static const char hex[] = "0123456789abcdef";
+    for (unsigned age = 0; age < WF_ROWS; age++) {
+        const uint8_t *src = waterfall + ((wf_head + WF_ROWS - age) % WF_ROWS) * W;
+        for (unsigned x = 0; x < W; x++) {
+            reply[2 * x] = hex[src[x] >> 4];
+            reply[2 * x + 1] = hex[src[x] & 15];
+        }
+        reply[2 * W] = '\n';
+        burst_serial_send(reply, 2 * W + 1);
+    }
+    return true;
+}
+
 bool dinmeter_command(const char *line) {
     char reply[256];
     if (!strcmp(line, "DM?")) {

@@ -253,6 +253,11 @@ void burst_serial_set_idle(void (*idle)(bool host_active)) {
     serve_idle = idle;
 }
 
+static bool (*serve_passive)(const char *line);
+void burst_serial_set_passive(bool (*passive)(const char *line)) {
+    serve_passive = passive;
+}
+
 void burst_serial_serve(void (*handle)(char *line)) {
     char line[128];
     int owner = -1;
@@ -265,6 +270,7 @@ void burst_serial_serve(void (*handle)(char *line)) {
             vTaskDelay(1);
             continue;
         }
+        if (status > 0 && serve_passive && serve_passive(line)) continue;
         int port = burst_serial_port();
         if (owner >= 0 && owner != port) {
             serve_reply("ERR busy\n");

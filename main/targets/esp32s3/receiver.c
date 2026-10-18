@@ -588,7 +588,10 @@ void app_main(void) {
 #if CONFIG_ESP_SDR_DINMETER
     frequency_mhz = 2437;
     rx_ready = false;
-    if (dinmeter_init()) burst_serial_set_idle(dinmeter_idle);
+    if (dinmeter_init()) {
+        burst_serial_set_idle(dinmeter_idle);
+        burst_serial_set_passive(dinmeter_passive_command);
+    }
 #endif
     burst_serial_serve(handle_command);
 }

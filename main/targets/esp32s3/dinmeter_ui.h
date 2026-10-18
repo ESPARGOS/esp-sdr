@@ -18,3 +18,5 @@ void dinmeter_step(unsigned center_khz, bool host_active, dinmeter_run_fn run, d
 void dinmeter_sink(const uint8_t *data, unsigned size);
 /* DM?, DMDUMP, ENC? */
 bool dinmeter_command(const char *line);
+/* DMWF: dump the waterfall's palette levels without pausing the display. */
+bool dinmeter_passive_command(const char *line);
