@@ -1,3 +1,9 @@
+/* Modified 2026-10-18: wire the shared continuous-capture engine
+ * (main/common/ring_capture.c) to this family receiver, which already compiles
+ * and runs it but had no export; the only prior wiring lives in
+ * main/targets/esp32s3/receiver.c. Original upstream source and license
+ * attribution remain.
+ */
 /* Shared ESP32-C5/C6/C61 burst receiver. Chip differences: target-selected chip.h. */
 #include <inttypes.h>
 #include <stdbool.h>
@@ -6,6 +12,7 @@
 #include "driver/usb_serial_jtag.h"
 #include "esp_cpu.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_phy_cert_test.h"
 #include "esp_rom_crc.h"
@@ -220,7 +227,83 @@ static bool capture(unsigned n, unsigned divider, unsigned format) {
 }
 
 #if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
+/* Continuous capture export (ring_capture.c). Reports end with one text line:
+ * <TAG> status detail units pairs elapsed_us late_max work_max_cycles
+ *       frames drops abandoned ffts stopped_by_host */
+static void ring_report(const char *tag, const ring_result_t *r) {
+    char h[224];
+    snprintf(h, sizeof(h),
+             "%s %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu64 " %" PRIu64
+             " %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 " %u\n",
+             tag, r->status, r->detail, r->units, r->pairs, r->elapsed_us, r->late_max,
+             r->work_max, r->frames, r->drops, r->abandoned, r->ffts, (unsigned)r->stopped_by_host);
+    reply(h);
+}
+
+/* RINGCAP payload: "RINGDATA units rate_hz n0 n1 n2 crc32\n", then the units'
+ * raw 32-bit IQ words back to back (gapless), then the RINGCAP report. */
+static void ring_send_capture(const ring_result_t *r, unsigned rate) {
+    uint32_t crc = 0;
+    for (unsigned u = 0; u < r->units; u++) {
+        const uint32_t *p = ring_capture_bank(r->cap[u].bank);
+        unsigned first = r->cap[u].first, n = r->cap[u].count, head = RING_PAIRS - first;
+        if (head > n) head = n;
+        crc = esp_rom_crc32_le(crc, (const uint8_t *)(p + first), head * 4);
+        crc = esp_rom_crc32_le(crc, (const uint8_t *)p, (n - head) * 4);
+    }
+    char h[128];
+    snprintf(h, sizeof(h),
+             "RINGDATA %" PRIu32 " %u %" PRIu32 " %" PRIu32 " %" PRIu32 " %08" PRIx32 "\n",
+             r->units, ring_capture_rate_hz(rate), r->cap[0].count,
+             r->units > 1 ? r->cap[1].count : (uint32_t)0, (uint32_t)0, crc);
+    reply(h);
+    for (unsigned u = 0; u < r->units; u++) {
+        const uint32_t *p = ring_capture_bank(r->cap[u].bank);
+        unsigned first = r->cap[u].first, n = r->cap[u].count, head = RING_PAIRS - first;
+        if (head > n) head = n;
+        (void)send_bytes(p + first, head * 4);
+        if (n > head) (void)send_bytes(p, (n - head) * 4);
+    }
+}
+
+static bool ring_export_command(const char *line) {
+    unsigned units, rate;
+    char extra;
+    if (!strcmp(line, "RINGINFO?")) {
+        /* The ring banks are reserved in SRAM; report what the heap kept. */
+        char h[96];
+        snprintf(h, sizeof(h), "RINGINFO %u %u %u %u\n",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT), RING_BANKS, RING_THRESHOLD);
+        reply(h);
+        return true;
+    }
+    if (sscanf(line, "RINGCAP %u %u %c", &units, &rate, &extra) != 2) return false;
+    if (!ring_capture_rate_hz(rate)) {
+        reply("ERR rate\n");
+        return true;
+    }
+    if (!units || units > RING_BANKS) {
+        reply("ERR args\n");
+        return true;
+    }
+    ring_config_t cfg = {.mode = RING_MODE_CAPTURE, .rate = rate, .capture_units = units};
+    prepare_rx();
+    unsigned saved[2];
+    rx_analog_apply(saved);
+    ring_result_t r;
+    ring_capture_run(&cfg, &r);
+    rx_analog_restore(saved);
+    if (!r.status) ring_send_capture(&r, rate);
+    ring_report("RINGCAP", &r);
+    return true;
+}
+#endif
+
+#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
 static bool ring_test(const char *line) {
+    /* RINGINFO?/RINGCAP: raw-IQ export of the engine above. */
+    if (ring_export_command(line)) return true;
     unsigned ms, rate, stride = 1, upf = 1, det = 0, n = 256, stats = 0;
     char extra;
     int fields =
@@ -334,6 +417,12 @@ static void handle_command(char *line) {
             " RX40 RX16"
 #else
             " LPF LPF12"
+#endif
+#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
+            /* Advertised exactly where ring_capture.c is compiled, which is
+             * also where these commands are answered. IQS stays absent:
+             * RING_MODE_IQ is ESP32-S3 only. */
+            " RINGINFO RINGCAP"
 #endif
             " ALPF"
 #if CONFIG_ESP_SDR_UART_ENABLED
