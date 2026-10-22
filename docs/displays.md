@@ -98,6 +98,7 @@ a 180° flip. If no panel answers on I2C, the feature stays idle.
 | --- | --- |
 | `DM?` | Din Meter status: span, knob mode, detector, line/frame counts, last run status, floor, peak, heap, encoder count |
 | `DMLINE` | Din Meter: noise floor and the latest 240 column levels (0.5 dB codes) |
+| `DMWF` | Din Meter: the 65×240 waterfall as hex palette levels, newest line first. Passive: it neither takes the serial lease nor pauses the display |
 | `OLED?` | C3: panel presence, on/off, view, floor, line count, FFTs in the last line |
 | `OLED ON` / `OLED OFF`, `OLEDMODE 0..2` | C3: blank the panel, select the view |
 | `OLEDDUMP` | C3: the frame buffer as 40 lines of `#`/`.` |
