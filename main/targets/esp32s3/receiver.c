@@ -27,6 +27,9 @@
 #include "rx_lo.h"
 #include "esp_rom_sys.h"
 #include "ring_capture.h"
+#if CONFIG_ESP_SDR_DINMETER
+#include "dinmeter_ui.h"
+#endif
 
 /* Vendor S3 adctrig uses the 64 KiB aperture at 0x3fcd0000 (MAC_DUMP_USAGE=4).
  * The continuous ring also uses the two banks below it. Keep all three, in
@@ -50,6 +53,8 @@ extern void set_chanfreq(unsigned, unsigned);
 extern void set_rf_freq_offset(unsigned, unsigned, int);
 static void s3_tune(unsigned mhz);
 static int s3_fofs; /* FOFS: PLL offset in kHz, applied from the next tune */
+/* Set when the knob, not the host, chose s3_fofs; a host FREQ clears it. */
+static bool fofs_from_ui;
 static void s3_tune(unsigned mhz) {
     static unsigned calibrated_mhz;
     if (calibrated_mhz != mhz || rx_recalibration_stale()) {
@@ -261,6 +266,7 @@ static bool ring_command(const char *line) {
             return true;
         }
         s3_fofs = off;
+        fofs_from_ui = false;
         rx_ready = false;
         prepare_rx();
         reply("OK\n");
@@ -437,6 +443,46 @@ static bool ring_command(const char *line) {
     return true;
 }
 
+#if CONFIG_ESP_SDR_DINMETER
+/* One display line: a short continuous SPEC run into the UI's sink, with
+ * the UI's analog bandwidth. The host's LPF/BANDWIDTH choice is kept. */
+static unsigned dinmeter_run(unsigned rate, unsigned nfft, unsigned bandwidth_mhz, unsigned ms, bool max_hold,
+                             unsigned *detail) {
+    ring_config_t c = {0};
+    c.mode = RING_MODE_SPEC;
+    c.rate = rate;
+    c.nfft = nfft;
+    c.duration_ms = ms;
+    c.stride = 1;
+    c.units_per_frame = 1000;
+    c.max_hold = max_hold;
+    int saved = rx_filter;
+    rx_filter = rx_bandwidth_dcap(bandwidth_mhz);
+    ring_result_t r;
+    prepare_rx();
+    rx_filter_apply();
+    ring_capture_local_sink = dinmeter_sink;
+    ring_capture_run(&c, &r);
+    ring_capture_local_sink = NULL;
+    rx_filter_restore();
+    rx_filter = saved;
+    *detail = r.detail;
+    return r.status;
+}
+static void dinmeter_retune(unsigned khz) {
+    unsigned mhz = khz / 1000;
+    int off = (int)(khz % 1000);
+    if (mhz == frequency_mhz && off == s3_fofs) return;
+    frequency_mhz = mhz;
+    s3_fofs = off;
+    fofs_from_ui = off != 0;
+    rx_ready = false;
+}
+static void dinmeter_idle(bool host_active) {
+    dinmeter_step(frequency_mhz * 1000u + (unsigned)s3_fofs, host_active, dinmeter_run, dinmeter_retune);
+}
+#endif
+
 #define BURST_ID       "S3SDR"
 #define BURST_MAX_RATE 6
 #include "burst_commands.h"
@@ -453,6 +499,13 @@ static void handle_command(char *line) {
     if (limits_command(line)) return;
     if (gain_command(line)) return;
     if (ring_command(line)) return;
+#if CONFIG_ESP_SDR_DINMETER
+    if (dinmeter_command(line)) return;
+    if (fofs_from_ui && !strncmp(line, "FREQ ", 5)) {
+        s3_fofs = 0;
+        fofs_from_ui = false;
+    }
+#endif
     if (burst_common_command(line)) return;
     unsigned n;
     unsigned rate __attribute__((unused)); /* only the diagnostic probes use it */
@@ -462,7 +515,11 @@ static void handle_command(char *line) {
 #if CONFIG_ESP_SDR_UART_ENABLED
               "DUALSERIAL "
 #endif
-              "TUNEEXT RX40 RX16 LPFANA GAIN HWAGC IQ8 RING SPEC SPECN SPECCAPS SPECSTAT DCT\n");
+              "TUNEEXT RX40 RX16 LPFANA GAIN HWAGC IQ8 RING SPEC SPECN SPECCAPS SPECSTAT DCT"
+#if CONFIG_ESP_SDR_DINMETER
+              " DINMETER"
+#endif
+              "\n");
     } else if (sscanf(line, "BANDWIDTH %u %c", &n, &extra) == 1 &&
                (!n || (n >= RX_BANDWIDTH_MIN && n <= RX_BANDWIDTH_MAX))) {
         rx_filter = rx_bandwidth_dcap(n);
@@ -500,6 +557,9 @@ static void handle_command(char *line) {
 }
 
 void app_main(void) {
+#if CONFIG_ESP_SDR_DINMETER
+    dinmeter_power_hold(); /* battery power stays on only while GPIO46 is high */
+#endif
     esp_log_level_set("*", ESP_LOG_NONE);
     esp_err_t e = nvs_flash_init();
     if (e == ESP_ERR_NVS_NO_FREE_PAGES || e == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -525,5 +585,13 @@ void app_main(void) {
     ESP_ERROR_CHECK(usb_serial_jtag_driver_uninstall());
     burst_serial_init();
     ring_capture_init();
+#if CONFIG_ESP_SDR_DINMETER
+    frequency_mhz = 2437;
+    rx_ready = false;
+    if (dinmeter_init()) {
+        burst_serial_set_idle(dinmeter_idle);
+        burst_serial_set_passive(dinmeter_passive_command);
+    }
+#endif
     burst_serial_serve(handle_command);
 }

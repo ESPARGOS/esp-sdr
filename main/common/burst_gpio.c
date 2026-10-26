@@ -50,6 +50,13 @@ static uint64_t excluded_pins(void) {
 #if CONFIG_ESP_SDR_UART_ENABLED
     mask |= PIN(CONFIG_ESP_SDR_UART_TX_PIN) | PIN(CONFIG_ESP_SDR_UART_RX_PIN);
 #endif
+#if CONFIG_ESP_SDR_DINMETER
+    /* LCD 4-9, buzzer 3, RTC I2C 11/12, encoder 40-42, power hold 46. */
+    mask |= PINS(3, 9) | PINS(11, 12) | PINS(40, 42) | PIN(46);
+#endif
+#if CONFIG_ESP_SDR_OLED_ENABLED
+    mask |= PIN(CONFIG_ESP_SDR_OLED_SDA) | PIN(CONFIG_ESP_SDR_OLED_SCL) | PIN(CONFIG_ESP_SDR_OLED_BUTTON);
+#endif
     return mask;
 }
 

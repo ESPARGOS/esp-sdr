@@ -24,3 +24,11 @@ bool burst_serial_stop_requested(void);
  * owns the receiver: the other gets "ERR busy" until the owner sends RELEASE
  * or stays silent for five seconds. RELEASE itself is answered here. */
 void burst_serial_serve(void (*handle)(char *line));
+/* Optional work for burst_serial_serve(), such as a stand-alone display:
+ * called with host_active=false while no port holds the lease, and with
+ * true while one does, including once before each host command runs. */
+void burst_serial_set_idle(void (*idle)(bool host_active));
+/* Optional read-only commands, such as display buffer dumps: tried first on
+ * every line; returns true if it answered. These neither take the lease nor
+ * pause the idle work. */
+void burst_serial_set_passive(bool (*passive)(const char *line));
