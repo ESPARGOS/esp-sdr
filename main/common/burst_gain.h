@@ -47,9 +47,15 @@ extern void phy_rfrx_sat_rst(unsigned);
 static unsigned gain_init_saved, gain_threshold_saved;
 static bool gain_defaults_saved;
 #endif
+#if CONFIG_IDF_TARGET_ESP32S3
+extern void burst_gain_pin_s3(int index);
+#endif
 static void gain_apply(void) {
     bool manual = gain_mode == GAIN_MANUAL;
     if (gain_code > gain_max()) gain_code = gain_max();
+#if CONFIG_IDF_TARGET_ESP32S3
+    burst_gain_pin_s3(manual ? (int)gain_code : -1);
+#endif
 #if CONFIG_IDF_TARGET_ESP32C61
     if (!gain_defaults_saved) {
         gain_init_saved = REG_READ(0x600a7094u);

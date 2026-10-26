@@ -41,6 +41,7 @@ endif()
 
 if(IDF_TARGET STREQUAL "esp32s3")
     list(APPEND sources "common/ring_capture.c" "${target_dir}/s3_fft_rnd.S" "${target_dir}/s3_unpack.S" "${target_dir}/s3_core1.S" "${target_dir}/s3_firdot.S")
+    list(APPEND sources "common/burst_gain_table_s3.c")
     # SPEC-mode FFT; pinned submodule, the component manager stays disabled.
     list(APPEND dependencies esp-dsp)
     list(APPEND fragments "${target_dir}/linker.lf")
@@ -106,4 +107,6 @@ include("common/rx_calibration_link.cmake")
 
 if(IDF_TARGET STREQUAL "esp32h2")
     target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=write_gain_mem")
+elseif(IDF_TARGET STREQUAL "esp32s3")
+    target_link_options(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=set_rx_gain_table")
 endif()
