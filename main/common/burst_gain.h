@@ -18,6 +18,7 @@ extern void force_rx_gain(unsigned, unsigned, unsigned);
 #define BURST_GAIN_REG 0x6001c02cu
 #endif
 #include "burst_gain_min.h"
+#include "rx_gain_force.h"
 typedef enum { GAIN_MANUAL, GAIN_HARDWARE } burst_gain_mode_t;
 static burst_gain_mode_t gain_mode = GAIN_HARDWARE;
 static unsigned gain_code = 40;
@@ -47,6 +48,16 @@ extern void phy_rfrx_sat_rst(unsigned);
 static unsigned gain_init_saved, gain_threshold_saved;
 static bool gain_defaults_saved;
 #endif
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3
+extern bool rx_gain_verified_apply(bool manual, unsigned index);
+extern bool rx_gain_verified_check(unsigned index);
+static bool gain_applied = true;
+#endif
+#if CONFIG_IDF_TARGET_ESP32C5
+static void gain_write(unsigned manual, unsigned index) {
+    force_rx_gain(manual, index, 0);
+}
+#endif
 static void gain_apply(void) {
     bool manual = gain_mode == GAIN_MANUAL;
     if (gain_code > gain_max()) gain_code = gain_max();
@@ -62,16 +73,22 @@ static void gain_apply(void) {
     REG_WRITE(0x600a713cu,
               manual ? (gain_threshold_saved & ~0x1fc0000u) | (gain_code << 18) : gain_threshold_saved);
 #endif
-#if CONFIG_IDF_TARGET_ESP32H2
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3
+    gain_applied = rx_gain_verified_apply(manual, gain_code);
+#elif CONFIG_IDF_TARGET_ESP32H2
+    /* H2's Bluetooth API triggers an update with index+1 then index, and also
+     * configures RX clocks/coexistence. Keep that target-specific sequence. */
     force_rx_gain(manual, gain_code);
     /* Keep the Bluetooth receiver running even when releasing forced gain. */
     bt_rx_force(1);
+#elif CONFIG_IDF_TARGET_ESP32C5
+    rx_gain_force(gain_write, manual, gain_code);
 #else
     force_rx_gain(manual, gain_code, 0);
 #endif
 }
 #if CONFIG_IDF_TARGET_ESP32S3
-/* The S3 backend restarts its continuous RX path when gain changes. */
+/* S3 gain changes refresh stale calibration and verify the latched gain. */
 static void gain_reconfigure(void);
 #endif
 static bool gain_command(const char *line) {
@@ -97,6 +114,12 @@ static bool gain_command(const char *line) {
     gain_reconfigure();
 #else
     gain_apply();
+#endif
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3
+    if (!gain_applied) {
+        reply("ERR gain\n");
+        return true;
+    }
 #endif
     reply("OK\n");
     return true;

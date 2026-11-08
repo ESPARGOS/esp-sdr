@@ -81,16 +81,19 @@ static void reply(const char *s) {
 #include "burst_limits.h"
 
 static void prepare_rx(void) {
-    if (rx_ready && !rx_recalibration_stale()) return;
+    if (rx_ready && !rx_recalibration_stale()) {
+        if (gain_mode == GAIN_MANUAL) gain_applied = rx_gain_verified_check(gain_code);
+        return;
+    }
     tune_rx(frequency_mhz);
     stop_tx_tone(1);
     rom_pbus_workmode();
     rom_pbus_xpd_tx_off();
     rom_pbus_xpd_rx_on(1);
     rom_set_rxclk_en(1);
-    gain_apply();
     rx_lo_select(rx_lo_plan(frequency_mhz).alternate);
     esp_rom_delay_us(3000);
+    gain_apply();
     rx_ready = true;
 }
 
@@ -102,6 +105,7 @@ static bool acquire_iq(unsigned n, unsigned divider, unsigned *capture_us) {
         return false;
     }
     prepare_rx();
+    if (!gain_applied) return false;
 
     for (unsigned j = 0; j < n; j++) IQ_BUFFER[j] = 0xa5a0055au;
     rx_filter_apply();
@@ -152,7 +156,10 @@ static bool spectrum_acquire(unsigned n, unsigned rate, const uint32_t **data, u
 
 static bool capture(unsigned n, unsigned divider, unsigned format) {
     unsigned elapsed;
-    if (!acquire_iq(n, divider, &elapsed)) return false;
+    if (!acquire_iq(n, divider, &elapsed)) {
+        if (!gain_applied) reply("ERR gain\n");
+        return false;
+    }
     return burst_send_capture(n, format, elapsed);
 }
 
