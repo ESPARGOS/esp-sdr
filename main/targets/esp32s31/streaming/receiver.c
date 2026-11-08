@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_phy_cert_test.h"
 #include "esp_rom_gpio.h"
+#include "esp_private/parlio_rx_private.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -30,6 +31,9 @@
 SOC_RESERVE_MEMORY_REGION(0x2f060000, 0x2f07f170, stream_rf_dump);
 #define DMA_NODE  4032u
 #define DMA_NODES 8u
+/* The S31 partial-RX callback precedes the final writes to that region.
+ * Keep the newest callback pending until the following region is reported. */
+#define DMA_PENDING 1u
 #define DMA_BYTES (DMA_NODE * DMA_NODES)
 static const int pins[16] = {20, 21, 22, 23, 24, 25, 33, 34, 36, 37, 38, 39, 40, 42, 43, 44};
 static parlio_rx_unit_handle_t unit;
@@ -185,6 +189,15 @@ static bool IRAM_ATTR dma_done(parlio_rx_unit_handle_t u, const parlio_rx_event_
     vTaskNotifyGiveFromISR(capture_task, &woke);
     return woke == pdTRUE;
 }
+/* Disable alone leaves the partially received PARLIO frame outstanding.
+ * Reset it before a new epoch, otherwise its early EOF can truncate a DMA
+ * descriptor in the next capture (including after DC calibration). */
+static void stop_dma(void) {
+    ESP_ERROR_CHECK(parlio_rx_soft_delimiter_start_stop(unit, delimiter, false));
+    ESP_ERROR_CHECK(parlio_rx_unit_trigger_fake_eof(unit, NULL));
+    ESP_ERROR_CHECK(parlio_rx_unit_disable(unit));
+}
+
 static bool dc_measure(float mean[2]) {
     source_samples = 0;
     stream_store(&event_head, 0);
@@ -198,11 +211,11 @@ static bool dc_measure(float mean[2]) {
     int64_t deadline = settled + 50000;
     while (count < 16384 && esp_timer_get_time() < deadline) {
         unsigned h = stream_load(&event_head);
-        if (h == tail) {
+        if (h - tail <= DMA_PENDING) {
             ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
             continue;
         }
-        if (h - tail >= DMA_NODES - 1) tail = h - 1;
+        if (h - tail >= DMA_NODES - 1) tail = h - 1 - DMA_PENDING;
         unsigned bytes = events[tail % DMA_NODES].bytes;
         const int8_t *data = (const int8_t *)events[tail % DMA_NODES].data;
         int si = 0, sq = 0;
@@ -222,8 +235,7 @@ static bool dc_measure(float mean[2]) {
         }
         tail++;
     }
-    ESP_ERROR_CHECK(parlio_rx_soft_delimiter_start_stop(unit, delimiter, false));
-    ESP_ERROR_CHECK(parlio_rx_unit_disable(unit));
+    stop_dma();
     if (count < 16384) return false;
     mean[0] = (float)sum_i / count;
     mean[1] = (float)sum_q / count;
@@ -246,8 +258,7 @@ static void capture_loop(void *arg) {
             uint32_t losses = __atomic_load_n(&transport_losses[cmd.owner], __ATOMIC_ACQUIRE);
             stream_store(&stream_owner, STREAM_IDLE);
             if (running) {
-                parlio_rx_soft_delimiter_start_stop(unit, delimiter, false);
-                ESP_ERROR_CHECK(parlio_rx_unit_disable(unit));
+                stop_dma();
                 running = false;
             }
             receiver_config = cmd.config;
@@ -302,21 +313,20 @@ static void capture_loop(void *arg) {
         }
         unsigned owner = stream_load(&stream_owner);
         if (running && (owner == STREAM_IDLE || (owner == STREAM_USB && !usb_ready()))) {
-            parlio_rx_soft_delimiter_start_stop(unit, delimiter, false);
-            ESP_ERROR_CHECK(parlio_rx_unit_disable(unit));
+            stop_dma();
             running = false;
             partial = 0;
             stream_store(&stream_owner, STREAM_IDLE);
         }
         unsigned h = stream_load(&event_head);
-        if (!running || h == tail) {
+        if (!running || h - tail <= DMA_PENDING) {
             ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1));
             continue;
         }
         if (h - tail >= DMA_NODES - 1) {
             /* The DMA producer can overwrite old nodes. Resume at a recent
              * complete node and preserve the absolute sample discontinuity. */
-            tail = h - 1;
+            tail = h - 1 - DMA_PENDING;
             uint64_t next = events[tail % DMA_NODES].sample;
             stream_record_drop(next - consumed + partial / 2, STREAM_DROP_DMA);
             consumed = next;
