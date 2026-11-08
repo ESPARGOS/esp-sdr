@@ -2,14 +2,17 @@
  * No CPU sampling loop, TCM refill windows, or TX implementation. */
 #include "driver/gpio.h"
 #include "driver/parlio_rx.h"
-#include "esp_clk_tree.h"
+#include "esp_clock_output.h"
+#include "esp_cpu.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_ipc_isr.h"
 #include "esp_log.h"
 #include "esp_phy_cert_test.h"
 #include "esp_rom_gpio.h"
+#include "esp_private/esp_clk_tree_common.h"
 #include "esp_private/parlio_rx_private.h"
+#include "esp_private/esp_gpio_reserve.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -26,8 +29,8 @@
 #include "stream.h"
 #include <string.h>
 
-/* Opening the diagnostic producer briefly also enables the TCM writer.
- * Reserve its entire upper aperture; the ongoing sample path is independent. */
+/* Reserve the upper TCM dump aperture for diagnostic startup and clock
+ * verification. Continuous samples use PARLIO, without TCM refill windows. */
 SOC_RESERVE_MEMORY_REGION(0x2f060000, 0x2f07f170, stream_rf_dump);
 #define DMA_NODE  4032u
 #define DMA_NODES 8u
@@ -35,6 +38,9 @@ SOC_RESERVE_MEMORY_REGION(0x2f060000, 0x2f07f170, stream_rf_dump);
  * Keep the newest callback pending until the following region is reported. */
 #define DMA_PENDING 1u
 #define DMA_BYTES (DMA_NODE * DMA_NODES)
+/* GPIO35 carries the capture clock and must also remain unconnected. */
+#define SAMPLE_CLOCK_PIN 35
+#define SAMPLE_CLOCK_HZ 80000000u
 static const int pins[16] = {20, 21, 22, 23, 24, 25, 33, 34, 36, 37, 38, 39, 40, 42, 43, 44};
 static parlio_rx_unit_handle_t unit;
 static parlio_rx_delimiter_handle_t delimiter;
@@ -171,6 +177,11 @@ static void IRAM_ATTR diagnostic_start(void) {
     REG_WRITE(HP_SYSTEM_MODEM_DIAG_EN_REG, UINT32_MAX);
     REG_WRITE(0x20109004, ctrl | BIT(31));
     for (volatile unsigned j = 0; j < 64; j++) __asm__ volatile("nop");
+    /* Without Wi-Fi packets, the PHY packet-search watchdog resets the
+     * baseband every ~139 ms, holding the diagnostic I/Q output for ~1.7 us.
+     * Disable its checks and actions here, since channel setup can restore them. */
+    REG_CLR_BIT(0x20107c3c, BIT(31) | BIT(30));
+    REG_CLR_BIT(0x20107c40, BIT(31) | BIT(30));
     REG_WRITE(HP_SYSTEM_TCM_DATA_DUMP_CTRL_REG, 0);
     __asm__ volatile("fence" ::: "memory");
     taskEXIT_CRITICAL(&gate_mux);
@@ -202,6 +213,9 @@ static bool dc_measure(float mean[2]) {
     source_samples = 0;
     stream_store(&event_head, 0);
     ESP_ERROR_CHECK(parlio_rx_unit_enable(unit, true));
+    /* In free-clock mode, capture starts only after DMA is mounted. Discard
+     * FIFO contents left by the preceding acquisition or calibration. */
+    parlio_ll_rx_reset_fifo(&PARL_IO);
     ESP_ERROR_CHECK(parlio_rx_soft_delimiter_start_stop(unit, delimiter, true));
     parlio_receive_config_t rx = {.delimiter = delimiter, .flags.partial_rx_en = true};
     ESP_ERROR_CHECK(parlio_rx_unit_receive(unit, dma_buffer, DMA_BYTES, &rx));
@@ -241,6 +255,77 @@ static bool dc_measure(float mean[2]) {
     mean[1] = (float)sum_q / count;
     return true;
 }
+static unsigned clock_prefix[2], clock_offset[2];
+/* Snapshot the ADC independently while PARLIO records the diagnostic bus.
+ * Keep both CPUs out of the TCM aperture until its writer is gated off. */
+static bool IRAM_ATTR clock_reference(void) {
+    unsigned began = esp_cpu_get_cycle_count();
+    esp_ipc_isr_stall_other_cpu();
+    taskENTER_CRITICAL(&gate_mux);
+    REG_WRITE(HP_SYSTEM_TCM_DATA_DUMP_CTRL_REG, 0xff000000u);
+    __asm__ volatile("fence" ::: "memory");
+    unsigned ctrl = (REG_READ(0x20109004) & ~0x803fffffu) | 16383 | BIT(17);
+    REG_WRITE(0x20109004, ctrl | BIT(18));
+    REG_WRITE(0x20109004, ctrl);
+    REG_WRITE(0x20109004, ctrl | BIT(31));
+    REG_SET_BIT(0x20109004, BIT(19));
+    REG_CLR_BIT(0x20109004, BIT(19));
+    unsigned count;
+    do {
+        count = REG_READ(0x20109008) & 0x1ffffu;
+    } while (count < 15000 && esp_cpu_get_cycle_count() - began < 100000u);
+    bool valid = count >= 15000 && count < 16383 && esp_cpu_get_cycle_count() - began < 100000u;
+    REG_WRITE(HP_SYSTEM_TCM_DATA_DUMP_CTRL_REG, 0);
+    __asm__ volatile("fence" ::: "memory");
+    taskEXIT_CRITICAL(&gate_mux);
+    esp_ipc_isr_release_other_cpu();
+    return valid;
+}
+static uint16_t clock_word(unsigned w) {
+    /* The TCM dump and diagnostic source 22 have opposite ADC lane order. */
+    return ((w >> 12) & 255u) | (((w >> 2) & 255u) << 8);
+}
+static bool clock_calibrate(void) {
+    const volatile uint32_t *reference = (void *)0x2f060000;
+    const uint16_t *data = (const uint16_t *)dma_buffer + 2048;
+    hal_utils_clk_div_t div = {.integer = 2};
+    parlio_ll_rx_set_clock_div(&PARL_IO, &div);
+    parlio_ll_rx_update_config(&PARL_IO);
+    clock_prefix[0] = clock_prefix[1] = 0;
+    for (unsigned phase = 0; phase < 2; phase++) {
+        esp_rom_gpio_connect_in_signal(SAMPLE_CLOCK_PIN, PARLIO_RX_CLK_PAD_IN_IDX, phase != 0);
+        source_samples = 0;
+        stream_store(&event_head, 0);
+        ESP_ERROR_CHECK(parlio_rx_unit_enable(unit, true));
+        parlio_ll_rx_reset_fifo(&PARL_IO);
+        ESP_ERROR_CHECK(parlio_rx_soft_delimiter_start_stop(unit, delimiter, true));
+        parlio_receive_config_t rx = {.delimiter = delimiter, .flags.partial_rx_en = true};
+        ESP_ERROR_CHECK(parlio_rx_unit_receive(unit, dma_buffer, DMA_BYTES, &rx));
+        bool valid = clock_reference();
+        stop_dma();
+        if (!valid) continue;
+        unsigned changes = 0;
+        for (unsigned j = 1; j < 4096; j++) changes += data[j] != data[j - 1];
+        if (changes < 32) continue;
+        /* At 40 MS/s each GPIO pair must equal every second 80 MS/s ADC pair.
+         * The offset accounts for the independent starts of the two writers.
+         * Require an exact match, including ADC noise, rather than assuming a
+         * particular RF signal or accepting a waveform that merely looks sane. */
+        for (unsigned offset = 256; offset + 8192 < 15000; offset++) {
+            unsigned n = 0;
+            while (n < 4096 && data[n] == clock_word(reference[offset + 2 * n])) n++;
+            if (n > clock_prefix[phase]) {
+                clock_prefix[phase] = n;
+                clock_offset[phase] = offset;
+                if (n == 4096) return true;
+            }
+        }
+    }
+    ESP_LOGE("clock", "ADC reference mismatch: prefixes %u/%u, offsets %u/%u",
+             clock_prefix[0], clock_prefix[1], clock_offset[0], clock_offset[1]);
+    return false;
+}
+
 static void capture_loop(void *arg) {
     (void)arg;
     unsigned tail = 0, partial = 0;
@@ -264,10 +349,8 @@ static void capture_loop(void *arg) {
             receiver_config = cmd.config;
             radio_configure(&cmd.config);
             diagnostic_start();
-            uint32_t hz = 0;
-            ESP_ERROR_CHECK(esp_clk_tree_src_get_freq_hz(PARLIO_CLK_SRC_DEFAULT,
-                                                         ESP_CLK_TREE_SRC_FREQ_PRECISION_CACHED, &hz));
-            hal_utils_clk_info_t info = {.src_freq_hz = hz,
+            bool clock_ok = cmd.owner == STREAM_IDLE || clock_calibrate();
+            hal_utils_clk_info_t info = {.src_freq_hz = SAMPLE_CLOCK_HZ,
                                          .exp_freq_hz = cmd.config.rate,
                                          .max_integ = PARLIO_LL_RX_MAX_CLK_INT_DIV,
                                          .min_integ = 1,
@@ -280,22 +363,23 @@ static void capture_loop(void *arg) {
             memset(receiver_dc_jacobian, 0, sizeof(receiver_dc_jacobian));
             memset(receiver_dc_before, 0, sizeof(receiver_dc_before));
             memset(receiver_dc_after, 0, sizeof(receiver_dc_after));
-            if (cmd.owner != STREAM_IDLE && cmd.config.dc_correction && !cmd.config.agc)
+            if (clock_ok && cmd.owner != STREAM_IDLE && cmd.config.dc_correction && !cmd.config.agc)
                 receiver_dc_calibrate(dc_measure);
             tail = 0;
             partial = 0;
             source_samples = consumed = 0;
             stream_store(&event_head, 0);
             stream_store(&stream_epoch, stream_load(&stream_epoch) + 1);
-            esp_err_t ok = ESP_OK;
+            esp_err_t ok = clock_ok ? ESP_OK : ESP_FAIL;
             if (cmd.owner != STREAM_IDLE &&
                 __atomic_load_n(&transport_losses[cmd.owner], __ATOMIC_ACQUIRE) != losses) {
                 cmd.owner = STREAM_IDLE;
                 ok = ESP_ERR_INVALID_STATE;
             }
-            if (cmd.owner != STREAM_IDLE) {
+            if (clock_ok && cmd.owner != STREAM_IDLE) {
                 start_us = esp_timer_get_time();
                 ESP_ERROR_CHECK(parlio_rx_unit_enable(unit, true));
+                parlio_ll_rx_reset_fifo(&PARL_IO);
                 ESP_ERROR_CHECK(parlio_rx_soft_delimiter_start_stop(unit, delimiter, true));
                 parlio_receive_config_t rx = {.delimiter = delimiter, .flags.partial_rx_en = true};
                 ESP_ERROR_CHECK(parlio_rx_unit_receive(unit, dma_buffer, DMA_BYTES, &rx));
@@ -387,21 +471,31 @@ void receiver_init(void) {
         heap_caps_aligned_alloc(64, STREAM_RING * sizeof(*stream_ring), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     dma_buffer = heap_caps_aligned_alloc(64, DMA_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     assert(stream_ring && dma_buffer);
-    uint64_t mask = 0;
+    assert(!esp_gpio_is_reserved(1ull << SAMPLE_CLOCK_PIN));
+    uint64_t mask = 1ull << SAMPLE_CLOCK_PIN;
     for (unsigned i = 0; i < 16; i++) mask |= 1ull << pins[i];
     gpio_config_t gp = {.pin_bit_mask = mask, .mode = GPIO_MODE_INPUT_OUTPUT};
     ESP_ERROR_CHECK(gpio_config(&gp));
+    /* Keep the reference free-running and select its sampling edge before
+     * PARLIO's rate divider, so clock verification applies to every rate. */
+    esp_clock_output_mapping_handle_t clock_output;
+    ESP_ERROR_CHECK(esp_clk_tree_enable_src(SOC_MOD_CLK_REF_F80M, true));
+    ESP_ERROR_CHECK(esp_clock_output_start(CLKOUT_SIG_REF_80M, SAMPLE_CLOCK_PIN, &clock_output));
+    ESP_ERROR_CHECK(esp_clock_output_set_divider(clock_output, 1));
     parlio_rx_unit_config_t pc = {.trans_queue_depth = 1,
                                   .max_recv_size = DMA_BYTES,
                                   .dma_burst_size = 64,
                                   .data_width = 16,
-                                  .clk_src = PARLIO_CLK_SRC_DEFAULT,
+                                  .clk_src = PARLIO_CLK_SRC_EXTERNAL,
+                                  .ext_clk_freq_hz = SAMPLE_CLOCK_HZ,
+                                  .flags.free_clk = 1,
                                   .exp_clk_freq_hz = 16000000,
-                                  .clk_in_gpio_num = -1,
+                                  .clk_in_gpio_num = SAMPLE_CLOCK_PIN,
                                   .clk_out_gpio_num = -1,
                                   .valid_gpio_num = -1};
     for (unsigned bit = 0; bit < 16; bit++) pc.data_gpio_nums[bit] = pins[bit ^ 8];
     ESP_ERROR_CHECK(parlio_new_rx_unit(&pc, &unit));
+    esp_rom_gpio_connect_in_signal(SAMPLE_CLOCK_PIN, PARLIO_RX_CLK_PAD_IN_IDX, false);
     for (unsigned bit = 0; bit < 16; bit++) {
         unsigned signal = bit < 6    ? HP_PROBE_TOP_OUT0_IDX + bit + 2
                           : bit < 8  ? HP_PROBE_TOP_OUT8_IDX + bit - 6
