@@ -16,6 +16,7 @@ class BurstGain(unittest.TestCase):
 #include <string.h>
 static unsigned forced, selected, mock_maximum=76;
 static char response[128];
+void esp_rom_delay_us(uint32_t us) { assert(us == 2); }
 void force_rx_gain(unsigned force, unsigned gain, unsigned unused) { forced=force; selected=gain; }
 static void reply(const char *s) { snprintf(response,sizeof(response),"%s",s); }
 #define REG_READ(address) ((forced << 23)|(mock_maximum << 8))

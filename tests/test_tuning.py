@@ -163,7 +163,18 @@ static void on(unsigned v){assert(v==1);check_normal();}
 #define phy_set_rxclk_en on
 #define rom_set_rxclk_en on
 #define set_rxclk_en on
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C3
+enum { GAIN_MANUAL = 0, GAIN_HARDWARE = 1 };
+static unsigned gain_mode = GAIN_HARDWARE, gain_code;
+static bool gain_applied = true;
+static bool rx_gain_verified_check(unsigned index) { return true; }
+static void check_gain(void) {
+  assert((ckgen & RX_LO_MASK) == (rx_lo_plan(frequency_mhz).alternate ? RX_LO_MASK : 0));
+}
+#define gain_apply check_gain
+#else
 #define gain_apply check_normal
+#endif
 static void esp_rom_delay_us(unsigned n){assert(n==3000);delays++;}
 static void esp_wifi_set_channel(unsigned a,unsigned b){assert(0);}
 static void force_rx_gain(unsigned a,unsigned b,unsigned c){assert(0);}
