@@ -105,18 +105,23 @@ bits of each are routed through the GPIO matrix (GPIO 20–25, 33–34, 36–40 
 16 lanes wide. PARLIO writes them into a circular DMA ring in internal RAM.
 There is no CPU in the sample path until packetization:
 
-1. The DMA interrupt records where each completed region ends and its absolute
-   sample position.
-2. A task on core 1 copies completed regions into a ring of 32 wire packets,
-   starting a new packet header every 672 samples.
+1. The DMA interrupt records each region and its absolute sample position.
+   On S31, the newest reported region can still be receiving DMA writes.
+2. A task on core 1 waits for the following region to be reported before
+   copying that data into a ring of 32 wire packets, starting a new packet
+   header every 672 samples. The DC calibration uses the same rule.
 3. A task on core 0 sends finished packets as UDP frames through the Ethernet
    MAC, or as batches of two 22 KB USB transfers.
 
 If the network or USB can't keep up, packets are dropped and counted, and the
 sample positions show exactly where. The producer never blocks and never
-overwrites queued output. Task priorities matter here: the USB and sender
-tasks run above Wi-Fi housekeeping, and control requests run below them, so a
-status request can't stall the stream.
+overwrites queued output. If capture falls behind, it resumes at the latest
+region safe to read; data overwritten during a copy is discarded before any
+packets from that copy are published. Stopping also resets the unfinished
+PARLIO frame so the next acquisition starts with a full frame length.
+Task priorities matter here: the USB and sender tasks run above Wi-Fi
+housekeeping, and control requests run below them, so a status request can't
+stall the stream.
 
 Why only 8 bits: PARLIO on the S31 has a single 16-bit receive unit, so 2 × 10
 bits don't fit. Full 10-bit samples would need a different capture path, so
