@@ -22,11 +22,13 @@ class ESP32CaptureRecovery(unittest.TestCase):
 #define DUMP_CTRL 0
 #define DUMP_BYTES 1
 #define DUMP_STATUS 2
+#define ADC_CTRL 4
+#define ADC_ON_FORCE (BIT(9) | BIT(8))
 #define DPORT_IRAM_DRAM_AHB_SEL_REG 3
 #define DPORT_MAC_DUMP_MODE_M 3
 #define DPORT_MAC_DUMP_MODE_S 0
-static uint32_t samples[CAPACITY], regs[4];
-static bool stale;
+static uint32_t samples[CAPACITY], regs[5];
+static bool stale, timeout;
 static unsigned preparations, starts;
 static bool rx_recalibration_stale(void) { return stale; }
 static void prepare_rx(void) { assert(stale); stale=false; preparations++; }
@@ -39,7 +41,11 @@ static void write_reg(unsigned reg, uint32_t value) {
     assert(!stale);
     regs[reg]=value;
     if(reg==DUMP_CTRL && (value & BIT(19))) {
+        assert((regs[ADC_CTRL] & ADC_ON_FORCE) == ADC_ON_FORCE);
+        /* A concurrent PHY update must survive ADC-control restoration. */
+        regs[ADC_CTRL] |= BIT(20);
         starts++;
+        if(timeout) return;
         unsigned n=value & 0xffff;
         for(unsigned i=0;i<n;i++) samples[i]=i;
         regs[DUMP_CTRL]|=BIT(18);
@@ -57,15 +63,21 @@ static void write_reg(unsigned reg, uint32_t value) {
 int main(void) {
  unsigned elapsed; const uint32_t *data;
  stale=true;
+ regs[ADC_CTRL]=BIT(9) | BIT(15);
  assert(!acquire_iq(255,0,1,&elapsed));
  assert(stale && preparations==0 && starts==0);
  assert(acquire_iq(256,0,1,&elapsed));
  assert(!stale && preparations==1 && starts==1);
+ assert(regs[ADC_CTRL]==(BIT(9) | BIT(15) | BIT(20)));
  assert(acquire_iq(256,0,1,&elapsed));
  assert(preparations==1 && starts==2);
  stale=true;
  assert(spectrum_acquire(256,0,&data,&elapsed));
  assert(!stale && preparations==2 && starts==3 && data==samples);
+ timeout=true;
+ regs[ADC_CTRL]=BIT(8) | BIT(14);
+ assert(!acquire_iq(256,0,1,&elapsed));
+ assert(regs[ADC_CTRL]==(BIT(8) | BIT(14) | BIT(20)));
 }
 '''
         with tempfile.TemporaryDirectory() as tmp:
