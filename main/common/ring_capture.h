@@ -98,4 +98,8 @@ bool ring_capture_dual_active(void);
 void ring_capture_set_dual(bool on);
 extern bool ring_capture_assist;        /* core 0 helps core 1 between bank switches */
 extern uint32_t ring_capture_c0_blocks; /* blocks core 0 handed off in the last run */
+/* When set, SPEC output goes to this on-device consumer instead of the
+ * serial port, and host input ends the run without being consumed. */
+typedef void (*ring_local_sink_fn)(const uint8_t *data, unsigned size);
+extern ring_local_sink_fn ring_capture_local_sink;
 #endif

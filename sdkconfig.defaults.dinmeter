@@ -1,0 +1,9 @@
+# M5Stack Din Meter (ESP32-S3, 8 MB flash): stand-alone spectrum/waterfall.
+# Build with SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.dinmeter"
+# (see docs/displays.md).
+CONFIG_ESP_SDR_DINMETER=y
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# Keep the SPI ISR in flash: IRAM growth moves DRAM into the RF ring guard.
+# CONFIG_SPI_MASTER_ISR_IN_IRAM is not set
+# Native USB only: UART0 is not wired out, and its 8 KiB RX buffer is needed for the UI.
+# CONFIG_ESP_SDR_UART_ENABLED is not set

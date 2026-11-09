@@ -1,0 +1,4 @@
+# ESP32-C3 SuperMini with 0.42" 72x40 OLED: stand-alone spectrum/waterfall.
+# Build with SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.c3oled"
+# (see docs/displays.md).
+CONFIG_ESP_SDR_OLED_ENABLED=y
