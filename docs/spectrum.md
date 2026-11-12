@@ -5,7 +5,7 @@
 | ESP32 | — | 256–2048 bins; 16/40/80 MS/s; UART |
 | ESP32-C2 | — | 256–2048 bins; 80/40/16 MS/s; UART |
 | ESP32-C3 | — | 256–2048 bins; 16/40/80 MS/s; USB or UART |
-| ESP32-C5 | — | 256–2048 bins; 4/8/10/20/40/80 MS/s |
+| ESP32-C5 | 256 bins; 4/8 MS/s; native USB | All other profiles; 256–2048 bins over UART |
 | ESP32-C6 | 256 bins; 16/40/80 MS/s; native USB | 512–2048 bins over USB; 256–2048 over UART |
 | ESP32-H2 | — | 256–2048 bins; 6.4/10.667/16/32 MS/s; USB or UART |
 | ESP32-C61 | 256 bins; 4/8/10/20/40/80 MS/s; native USB | 512–2048 bins over USB; 256–2048 over UART |
@@ -35,8 +35,8 @@ codes 0–7 retain their meanings. H2 provides snapshot spectra at
 Each profile contains `[sample_rate_hz, rate_code, fft_bins, stride,
 units_per_frame, continuous]`. The last field is optional for compatibility;
 five-field profiles inherit the top-level `continuous` value. Capabilities
-are specific to the connection: C6/C61 use snapshot FFT on UART and
-continuous 256-bin capture on native USB. S31 supports continuous capture at
+are specific to the connection: C5/C6/C61 use snapshot FFT on UART and
+continuous 256-bin capture on native USB (C5 at 4/8 MS/s only). S31 supports continuous capture at
 all advertised FFT sizes and rates on native USB, with snapshots over UART.
 S3 spectra require native USB.
 Unsupported controls stay hidden. Existing S3 firmware without `SPECCAPS`
@@ -122,16 +122,21 @@ the display. Raw I/Q captures retain their original behavior.
 
 ## How each chip computes spectra
 
-**Snapshot chips (ESP32, S2, C2, C3, C5, H2):** capture a burst, stop the
+**Snapshot chips (ESP32, S2, C2, C3, H2; C5 fallback profiles):** capture a burst, stop the
 dump engine, give the SRAM back to the CPU, then run the FFTs. There is a gap
 in the RF data while this happens. The C3 has to work this way at every FFT
 size: while the dump engine owns its SRAM, CPU reads return a repeating
 four-word pattern, which would show up as false peaks.
 
-**C6 and C61:** the dump engine keeps writing a ring of two SRAM banks. While
+**C5, C6 and C61:** the dump engine keeps writing a ring of two SRAM banks. While
 it fills one bank, the CPU copies a 256-sample window out of the other in one
 bounded step and runs a scalar FFT on it in short slices. The FFT, checksum and
 statistics code is warmed up before capture starts.
+
+C5 runs the capture worker on an LP-SRAM stack because selecting its second
+destination temporarily makes live heap/ROM data CPU-inaccessible. Snapshot
+processing reuses reserved SRAM after the finite writer stops. See
+[C5 capture notes and hardware validation](esp32c5-continuous.md).
 
 **S3:** a ring of three banks. Core 1 runs a bare-metal worker that unpacks
 samples with SIMD instructions, computes FFTs, accumulates power and encodes

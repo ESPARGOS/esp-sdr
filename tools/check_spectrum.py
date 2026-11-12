@@ -42,7 +42,7 @@ def synchronize(port):
     raise TimeoutError('Could not synchronize the serial lease')
 
 
-def check(port, milliseconds, stats=False):
+def check(port, milliseconds, stats=False, continuous_only=False):
     synchronize(port)
     result={'identity':command(port,'INFO'),'transport':command(port,'TRANSPORT?'),'runs':[]}
     caps=command(port,'CAPS').split()
@@ -57,11 +57,14 @@ def check(port, milliseconds, stats=False):
     if transport not in result['capabilities'].get('transports',[transport]):
         raise RuntimeError(f'Spectra are not offered over {transport}; use {result["capabilities"]["transports"]}')
     for profile in result['capabilities']['profiles']:
+        continuous=bool(profile[5]) if len(profile)>5 else bool(result['capabilities']['continuous'])
+        if continuous_only and not continuous:
+            continue
         fs,rate,n,stride,units=profile[:5]
         for detector in (0,1):
             header=command(port,f'SPEC {milliseconds} {stride} {units} {detector} {rate} {n}'+(' 1' if stats else '')).split()
             if len(header)!=5 or header[0]!='SPEC' or int(header[1])!=n or int(header[2])!=fs:
-                raise RuntimeError(f'Unexpected start: {header}')
+                raise RuntimeError(f'Unexpected start for {profile}, detector {detector}: {header}')
             run={'profile':profile,'detector':detector,'frames':0,'ffts':0,'stats':[]}
             previous=-1
             while True:
@@ -88,6 +91,8 @@ def check(port, milliseconds, stats=False):
                     raise RuntimeError('Frame CRC mismatch')
                 if 1<<frame[26]!=n or frame[27]!=2:
                     raise RuntimeError('Unexpected FFT shape or power encoding')
+                if bool(frame[22]&8)==continuous:
+                    raise RuntimeError('Frame gap flag disagrees with advertised capture mode')
                 index=int.from_bytes(frame[8:16],'little')
                 ffts=int.from_bytes(frame[20:22],'little')
                 if index<=previous or not ffts:
@@ -114,6 +119,7 @@ def main():
     parser.add_argument('--baud',type=int,default=2000000)
     parser.add_argument('--milliseconds',type=int,default=300)
     parser.add_argument('--stats',action='store_true',help='Request and validate SPS1 telemetry')
+    parser.add_argument('--continuous-only',action='store_true',help='Check only continuous capture profiles')
     args=parser.parse_args()
     if not 100<=args.milliseconds<=60000:
         parser.error('--milliseconds must be between 100 and 60000')
@@ -123,7 +129,7 @@ def main():
     port.port=args.port
     port.open()
     try:
-        print(json.dumps(check(port,args.milliseconds,args.stats),indent=2))
+        print(json.dumps(check(port,args.milliseconds,args.stats,args.continuous_only),indent=2))
     finally:
         port.close()
 

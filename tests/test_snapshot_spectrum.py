@@ -12,6 +12,12 @@ class SnapshotSpectrum(unittest.TestCase):
     @unittest.skipUnless(shutil.which('cc'), 'Host C compiler unavailable')
     def test_mean_max_bin_order_and_frame_counts(self):
         source = (ROOT / 'main/common/spectrum.c').read_text()
+        # Model the C5's reserved lower bank independently of host addresses.
+        for address, offset in [('0x40820000', 0), ('0x40822000', 8192),
+                                ('0x40823000', 12288), ('0x40825000', 20480)]:
+            for ctype in ['int16_t', 'float', 'uint8_t']:
+                source = source.replace(f'({ctype} *){address}',
+                                        f'({ctype} *)(host_c5_sram + {offset})')
         sdk_headers = ['esp_cpu.h', 'dsps_fft2r.h', 'esp_rom_crc.h', 'esp_timer.h',
                        'freertos/FreeRTOS.h', 'freertos/task.h', 'spectrum_fft.h']
         for header in sdk_headers:
@@ -29,6 +35,7 @@ static unsigned transforms,frames,wanted_units,wanted_n,wanted_detector,full_sca
 static unsigned batch_start;
 static char replies[4096];
 static uint32_t words[2048];
+static uint8_t host_c5_sram[65536] __attribute__((aligned(16)));
 static int16_t *dsps_fft_w_table_sc16;
 static uint32_t esp_cpu_get_cycle_count(void){return 0;}
 static int64_t esp_timer_get_time(void){static int64_t t;return t+=1000;}
@@ -42,7 +49,8 @@ static void spectrum_fft_poll(int16_t *x,unsigned n,const int16_t *w,void (*poll
  dsps_fft2r_sc16_ansi(x,n);poll(context);
 }
 static uint32_t esp_rom_crc32_le(uint32_t c,const void *p,unsigned n){return 0;}
-burst_serial_port_t burst_serial_port(void){return BURST_SERIAL_USB;}
+static burst_serial_port_t test_port=BURST_SERIAL_USB;
+burst_serial_port_t burst_serial_port(void){return test_port;}
 bool burst_serial_stop_requested(void){return stop_after && transforms>=stop_after;}
 void spectrum_stats_init(spectrum_stats_t *s){memset(s,0,sizeof(*s));}
 void spectrum_stats_emit(spectrum_stats_t *s,unsigned n,unsigned fs,uint32_t ffts,
@@ -86,8 +94,20 @@ int main(void){
 #if CONFIG_IDF_TARGET_ESP32C61
  assert(strstr(replies,"[4000000,5,2048,1,1,0]"));
  assert(strstr(replies,"[80000000,0,256,1,1,1]"));
+#elif CONFIG_IDF_TARGET_ESP32C5
+ assert(strstr(replies,"[4000000,5,2048,1,1,0]"));
+ assert(strstr(replies,"[4000000,5,256,1,1,1]"));
+ assert(strstr(replies,"[8000000,4,256,1,1,1]"));
+ assert(strstr(replies,"[80000000,0,256,1,1,0]"));
 #else
  assert(strstr(replies,"[80000000,0,256,1,1,0]"));
+#endif
+#if CONFIG_IDF_TARGET_ESP32C5
+ test_port=BURST_SERIAL_UART;replies[0]=0;
+ assert(spectrum_command("SPECINFO?",2412,acquire));
+ assert(strstr(replies,"[4000000,5,256,1,1,0]"));
+ assert(strstr(replies,"[8000000,4,256,1,1,0]"));
+ test_port=BURST_SERIAL_USB;
 #endif
  replies[0]=0;
  assert(spectrum_command("SPEC 1 1 1 0 0 4096",2412,acquire));
@@ -110,7 +130,7 @@ int main(void){
             src = Path(tmp) / 'snapshot.c'
             src.write_text('#include <stdlib.h>\n' + stub + source + check)
             exe = Path(tmp) / 'snapshot'
-            for target in ['ESP32C3', 'ESP32C61']:
+            for target in ['ESP32C3', 'ESP32C61', 'ESP32C5']:
                 with self.subTest(target=target):
                     subprocess.run(['cc', '-std=gnu11', '-O2', '-fsanitize=undefined',
                                     f'-DCONFIG_IDF_TARGET_{target}=1',

@@ -1,5 +1,5 @@
 /*
- * Continuous RF capture: S3/C6/C61 bank rotation.
+ * Continuous RF capture: S3/C5/C6/C61 bank rotation.
  *
  * The ADC dump engine writes IQ pairs at a ring index that advances
  * continuously (mod 16384) into whichever of the SRAM banks is selected.
@@ -69,7 +69,7 @@ int s3_fft2r_sc16_rnd_stage(int16_t *data, int N, int16_t *w, unsigned stage);
  * bank switch must not miss the flash cache either: otherwise the first capture
  * after boot missed its first unit end in about 40% of boots, depending only on
  * the binary layout. */
-#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32C61
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C5
 #define RING_SWITCH IRAM_ATTR
 #else
 #define RING_SWITCH
@@ -119,7 +119,7 @@ int s3_fft2r_sc16_rnd_stage(int16_t *data, int N, int16_t *w, unsigned stage);
 
 static inline void select_banks(uint32_t saved, unsigned mask) {
 #if !CONFIG_IDF_TARGET_ESP32S3
-#if CONFIG_IDF_TARGET_ESP32C6
+#if CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32C5
     REG_WRITE(DUMP_BANK_SELECT_REG, (saved & ~0x10f00u) | (mask << 9));
 #else
     REG_WRITE(DUMP_BANK_SELECT_REG, (saved & ~0x11f00u) | (mask << 10));
@@ -146,7 +146,7 @@ const uint32_t *ring_capture_bank(unsigned b) {
 unsigned ring_capture_rate_hz(unsigned rate) {
 #if CONFIG_IDF_TARGET_ESP32C6
     return rate == 0 ? 80000000u : rate == 1 ? 40000000u : rate == 6 ? 16000000u : 0;
-#elif CONFIG_IDF_TARGET_ESP32C61
+#elif CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C5
     const unsigned rates[] = {80000000, 40000000, 20000000, 10000000, 8000000, 4000000};
     return rate < 6 ? rates[rate] : 0;
 #else
@@ -156,7 +156,7 @@ unsigned ring_capture_rate_hz(unsigned rate) {
 static uint32_t rate_bits(unsigned rate) {
 #if CONFIG_IDF_TARGET_ESP32C6
     return rate == 6 ? (3u << 15) : rate == 1 ? (1u << 15) : 0; /* divide by 5 or 2 */
-#elif CONFIG_IDF_TARGET_ESP32C61
+#elif CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C5
     return 0;
 #else
     return rate == 6 ? (1u << 16) : rate == 1 ? (1u << 15) : 0;
@@ -1688,7 +1688,7 @@ RING_HOT void ring_capture_run(const ring_config_t *cfg, ring_result_t *r) {
     unsigned irq = portSET_INTERRUPT_MASK_FROM_ISR();
     REG_WRITE(DUMP_CTRL_REG, 0);
     REG_WRITE(DUMP_CONFIG_REG, DUMP_CONFIG_IQ);
-#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
+#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32C5
 #if CONFIG_IDF_TARGET_ESP32C6
     REG_WRITE(0x600a9804, 0xffffffffu);
     REG_WRITE(0x600a9814, 0x7ffffu);

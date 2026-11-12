@@ -9,6 +9,9 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 # CONFIG_PM_ENABLE is not set
+# Bank rotation masks interrupts; use its bounded per-bank deadline checks.
+# CONFIG_ESP_INT_WDT is not set
+# CONFIG_ESP_TASK_WDT_EN is not set
 # Leave enough non-modem SRAM for static data and task stacks.
 # CONFIG_ESP_WIFI_IRAM_OPT is not set
 # CONFIG_ESP_WIFI_EXTRA_IRAM_OPT is not set

@@ -8,7 +8,7 @@
 #include "sdkconfig.h"
 #include "spectrum_dc.h"
 
-#if CONFIG_IDF_TARGET_ESP32C6
+#if CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32C5
 #define RING_BANKS       2u
 #define RING_BANK_BASE   0x40820000u
 #define RING_BANK_END    0x40860000u
@@ -81,6 +81,11 @@ typedef struct {
     bool stopped_by_host;
     ring_unit_t cap[RING_BANKS];
 } ring_result_t;
+
+#if CONFIG_IDF_TARGET_ESP32C5
+/* Bank 2's upper half may contain the caller's stack and heap. */
+void c5_ring_capture_run(const ring_config_t *config, ring_result_t *result);
+#endif
 
 void ring_capture_init(void);
 /* Caller has prepared the receiver (tuning, gain, filter). Interrupts are

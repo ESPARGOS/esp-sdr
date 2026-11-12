@@ -26,6 +26,21 @@
 #else
 #define SPEC_STORAGE
 #endif
+#if CONFIG_IDF_TARGET_ESP32C5
+/* The finite writer uses bank 1's upper 64 KiB (0x40830000). Reuse its
+ * reserved lower half for snapshot DSP/output, accessed only after capture
+ * restores CPU ownership. The continuous engine overwrites this workspace
+ * with samples and uses its own small BSS workspace instead. */
+static int16_t *const fft_data = (int16_t *)0x40820000;
+static int16_t *const window = (int16_t *)0x40822000;
+static union {
+    float *mean;
+    uint32_t *maximum;
+} powers = {.mean = (float *)0x40823000};
+static uint8_t *const frame = (uint8_t *)0x40825000;
+_Static_assert(0x40825000u + HEADER_BYTES + MAX_FFT + 4 <= 0x40830000u,
+               "C5 snapshot workspace overlaps finite capture");
+#else
 static int16_t fft_data[2 * MAX_FFT] __attribute__((aligned(16))) SPEC_STORAGE;
 static int16_t window[MAX_FFT] SPEC_STORAGE;
 /* Same workspace size for both detectors. Max-hold never needs floats;
@@ -35,8 +50,10 @@ static union {
     uint32_t maximum[MAX_FFT];
 } powers SPEC_STORAGE;
 static uint8_t frame[HEADER_BYTES + MAX_FFT + 4] SPEC_STORAGE;
+#endif
 static unsigned setup_n;
 static bool ready;
+
 spectrum_workspace_t spectrum_workspace(void) {
     setup_n = 0;
     return (spectrum_workspace_t){fft_data, window, powers.mean, frame};
@@ -97,7 +114,9 @@ static void capabilities(void) {
             for (unsigned n = 256; n <= MAX_FFT; n *= 2) {
                 char text[96];
                 snprintf(text, sizeof(text), "%s[%u,%u,%u,1,1,%u]", first ? "" : ",", rates[r], r, n,
-#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
+#if CONFIG_IDF_TARGET_ESP32C5
+                         n == 256 && r >= 4 && burst_serial_port() != BURST_SERIAL_UART
+#elif CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
                          n == 256 && burst_serial_port() != BURST_SERIAL_UART
 #else
                          0u
@@ -153,7 +172,7 @@ static size_t pack_spectrum(unsigned n, unsigned log2n, unsigned det, unsigned m
         bin ^= bit;
     }
     put32(HEADER_BYTES + n, esp_rom_crc32_le(0, frame, HEADER_BYTES + n));
-    memset(&powers, 0, n * sizeof(float));
+    memset(powers.mean, 0, n * sizeof(float));
     return HEADER_BYTES + n + 4;
 }
 
@@ -185,6 +204,9 @@ bool spectrum_command(const char *line, unsigned frequency_mhz, spectrum_acquire
         send_text("ERR spec_args\n");
         return true;
     }
+#if CONFIG_IDF_TARGET_ESP32C5
+    setup_n = 0; /* A preceding continuous run reused the snapshot window. */
+#endif
     spectrum_fft_init();
     if (!ready) {
         send_text("ERR spectrum_memory\n");
@@ -210,7 +232,7 @@ bool spectrum_command(const char *line, unsigned frequency_mhz, spectrum_acquire
     uint8_t gain = 0;
     uint64_t index = 0;
     spectrum_output_t out = {.frames = &frames, .progress = start};
-    memset(&powers, 0, n * sizeof(float));
+    memset(powers.mean, 0, n * sizeof(float));
     do {
         if (burst_serial_stop_requested()) {
             stopped = true;

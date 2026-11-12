@@ -28,7 +28,7 @@
 #include "burst_gpio.h"
 #include "burst_version.h"
 #include "spectrum.h"
-#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
+#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32C5
 #include "ring_capture.h"
 #endif
 #include "rx_tuning.h"
@@ -219,7 +219,7 @@ static bool capture(unsigned n, unsigned divider, unsigned format) {
     return burst_send_capture(n, format, elapsed);
 }
 
-#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
+#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32C5
 static bool ring_test(const char *line) {
     unsigned ms, rate, stride = 1, upf = 1, det = 0, n = 256, stats = 0;
     char extra;
@@ -227,6 +227,10 @@ static bool ring_test(const char *line) {
         sscanf(line, "SPEC %u %u %u %u %u %u %u %c", &ms, &stride, &upf, &det, &rate, &n, &stats, &extra);
     bool spec = fields == 6 || fields == 7;
     if (spec && (n != 256 || burst_serial_port() == BURST_SERIAL_UART)) return false;
+#if CONFIG_IDF_TARGET_ESP32C5
+    /* Keep other profiles on the existing snapshot path. */
+    if (spec && rate != 4 && rate != 5) return false;
+#endif
 #ifdef RING_PROBE
     if (!spec)
         spec =
@@ -259,7 +263,11 @@ static bool ring_test(const char *line) {
                          .max_hold = det == 1,
                          .stats = stats != 0};
     ring_result_t r;
+#if CONFIG_IDF_TARGET_ESP32C5
+    c5_ring_capture_run(&cfg, &r);
+#else
     ring_capture_run(&cfg, &r);
+#endif
     rx_analog_restore(saved);
     char h[200];
     snprintf(h, sizeof(h), "%s %u %u %u %llu %llu %u %u %u %u %u %u %u\n", spec ? "SPECEND" : "RINGTEST",
@@ -286,6 +294,16 @@ void app_main(void) {
     ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb));
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+#if CONFIG_IDF_TARGET_ESP32C5
+    /* Leave room for the second capture destination; NULL mode neither
+     * associates nor transmits packets. UART support remains available. */
+    cfg.static_rx_buf_num = 2;
+    cfg.dynamic_rx_buf_num = 4;
+    cfg.dynamic_tx_buf_num = 4;
+    cfg.rx_mgmt_buf_num = 2;
+    cfg.mgmt_sbuf_num = 6;
+    cfg.espnow_max_encrypt_num = 0;
+#endif
 #if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
     cfg.static_rx_buf_num = 4;
 #endif
@@ -313,7 +331,7 @@ static void handle_command(char *line) {
 #ifdef RING_PROBE
     if (ring_probe_command(line)) return;
 #endif
-#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6
+#if CONFIG_IDF_TARGET_ESP32C61 || CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32C5
     if (ring_test(line)) return;
 #endif
     if (spectrum_command(line, frequency_mhz, spectrum_acquire)) return;

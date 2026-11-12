@@ -37,7 +37,7 @@ with [SoapyESPSDR](https://github.com/ESPARGOS/SoapyESPSDR), or an ESP32-S3 with
 | ESP32 | ✅ | — | GPIO1 / GPIO3 | 80, 40, 16 | |
 | ESP32-C2 | ✅ | — | GPIO20 / GPIO19 | 80, 40, 16 | 26 MHz crystal; rebuild for 40 MHz |
 | ESP32-C3 | ✅ | Serial/JTAG | GPIO21 / GPIO20 | 80, 40, 16 | |
-| ESP32-C5 | ✅ | Serial/JTAG | GPIO11 / GPIO12 | 80 … 4 | also receives 5 GHz |
+| ESP32-C5 | ✅ | Serial/JTAG | GPIO11 / GPIO12 | 80 … 4 | continuous capture¹ (256 bins, 4/8 MS/s); also receives 5 GHz |
 | ESP32-C6 | ✅ | Serial/JTAG | GPIO16 / GPIO17 | 80, 40, 16 | continuous capture¹ (256 bins) |
 | ESP32-C61 | ✅ | Serial/JTAG | GPIO11 / GPIO10 | 80 … 4 | continuous capture¹ (256 bins) |
 | ESP32-H2 | ✅ | Serial/JTAG | GPIO24 / GPIO23 | 32, 16, 10.667, 6.4 | Bluetooth radio, see [esp32h2.md](docs/esp32h2.md) |
@@ -54,7 +54,7 @@ with [SoapyESPSDR](https://github.com/ESPARGOS/SoapyESPSDR), or an ESP32-S3 with
 it computes spectra, over native USB only. It can't FFT all of it: only a
 small share of the signal, often a few percent or less, goes into a
 spectrum. The viewer shows that share as FFT coverage. This mode exists at
-256 FFT bins on the C6 and C61, and at all sizes on the S3 and S31. All other
+256 FFT bins on the C5 (4/8 MS/s), C6 and C61, and at all sizes on the S3 and S31. All other
 spectra, including every spectrum over UART, come from separate snapshots
 with gaps in between; the viewer then says "Reception has gaps between
 snapshots".
@@ -73,7 +73,7 @@ S2), so there are gaps between them. Gain is not calibrated in dB.
 rates above. This is what the browser viewer uses.
 
 **On-chip spectra** (all chips): the firmware computes 256–2048-bin FFTs and
-sends compact spectra instead of raw samples. On the C6, C61, S3 and S31 over
+sends compact spectra instead of raw samples. On the C5 (256 bins, 4/8 MS/s), C6, C61, S3 and S31 over
 native USB, the receiver keeps recording between FFTs (continuous capture¹),
 but only part of the signal is analyzed. See [spectrum.md](docs/spectrum.md). The original S3 Turbo
 Mode was developed by Zoltan Doczi from [Z2Labs](https://www.z2labs.io/).
