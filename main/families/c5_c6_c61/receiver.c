@@ -33,6 +33,9 @@
 #endif
 #include "rx_tuning.h"
 #include "rx_recalibration.h"
+#if CONFIG_IDF_TARGET_ESP32C5
+#include "esp_private/esp_modem_clock.h"
+#endif
 extern void phy_stop_tx_tone(unsigned);
 extern void phy_pbus_workmode(void);
 extern void phy_pbus_xpd_rx_on(unsigned);
@@ -296,6 +299,12 @@ void app_main(void) {
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     ESP_ERROR_CHECK(esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE));
+#if CONFIG_IDF_TARGET_ESP32C5
+    /* adctrig() reads and writes 0x600a20b4, which is in the BT block. Nothing here
+     * starts the BT controller, so its modem clock is off and each of those two
+     * accesses waits about 0.8 ms for a bus timeout: ~1.6 ms of every capture. */
+    modem_clock_module_enable(PERIPH_BT_MODULE);
+#endif
     prepare_rx();
     esp_log_level_set("*", ESP_LOG_NONE);
     (void)usb_serial_jtag_wait_tx_done(pdMS_TO_TICKS(100));
