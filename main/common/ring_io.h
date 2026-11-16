@@ -29,7 +29,19 @@ static int ring_read_byte(uint8_t *b) {
     return 0;
 #endif
 }
+/* An on-device consumer (stand-alone display) takes the stream instead of
+ * the serial port; it is set only around its own runs. */
+#if CONFIG_IDF_TARGET_ESP32S3
+#include "ring_capture.h"
+#define RING_LOCAL_SINK ring_capture_local_sink
+#else
+#define RING_LOCAL_SINK ((void (*)(const uint8_t *, unsigned))0)
+#endif
 static int ring_write(const uint8_t *p, unsigned n) {
+    if (RING_LOCAL_SINK) {
+        RING_LOCAL_SINK(p, n);
+        return (int)n;
+    }
     if (burst_serial_port() == BURST_SERIAL_UART) return uart_tx_chars(UART_NUM_0, (const char *)p, n);
 #if SOC_USB_SERIAL_JTAG_SUPPORTED
     if (!usb_serial_jtag_ll_txfifo_writable()) return 0;

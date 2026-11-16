@@ -87,6 +87,12 @@ continuous 8-bit I/Q at up to 20 MS/s over high-speed USB or 40 MS/s over
 Gigabit Ethernet, for [SoapyESPSDR](https://github.com/ESPARGOS/SoapyESPSDR).
 See [s31-streaming.md](docs/s31-streaming.md).
 
+**Stand-alone displays** (optional builds): a live spectrum and waterfall on
+an M5Stack Din Meter (ESP32-S3; the knob tunes, a press switches it to span
+adjustment, 80 down to 2 MHz) or an ESP32-C3 SuperMini with a 0.42" OLED,
+with no host computer. A USB host still gets the full protocol. See
+[displays.md](docs/displays.md).
+
 ![Gqrx displaying an LTE signal at 2.63 GHz, continuously sampled at 40 MSa/s over Ethernet with an ESP32-S31 and SoapyESPSDR.](docs/gqrx-esp-sdr.png)
 
 ## Talking to the firmware

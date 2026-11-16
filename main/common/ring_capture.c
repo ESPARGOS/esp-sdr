@@ -270,6 +270,10 @@ static uint8_t txq[TXQ_SIZE];
 static uint32_t txq_head, txq_tail; /* free-running byte counters */
 _Static_assert((TXQ_SIZE & (TXQ_SIZE - 1u)) == 0, "queue size");
 
+#if CONFIG_IDF_TARGET_ESP32S3
+ring_local_sink_fn ring_capture_local_sink;
+#endif
+
 RING_HOT static bool txq_push(const void *data, size_t n) {
     if (TXQ_SIZE - (txq_head - txq_tail) < n) return false;
     const uint8_t *s = data;
@@ -1991,7 +1995,9 @@ RING_HOT void ring_capture_run(const ring_config_t *cfg, ring_result_t *r) {
     REG_WRITE(DUMP_BANK_SELECT_REG, bank_sel_saved);
     r->elapsed_us = (uint64_t)(esp_timer_get_time() - t_start);
     r->pairs = index;
-    (void)host_input(); /* consume the stop request so the parser never sees it */
+    /* Consume the stop request so the parser never sees it. A local-sink run
+     * stops for host input too, but leaves the command for the parser. */
+    if (!RING_LOCAL_SINK) (void)host_input();
 #if !CONFIG_IDF_TARGET_ESP32S3
     if (spec) {
         while (scalar_work()) txq_pump();
